@@ -116,9 +116,8 @@ jobs:
           TAG="pr-${PR_NUMBER}"
           IPA_NAME="Spatial-Graffiti-unsigned.ipa"
           IPA_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/${IPA_NAME}"
-          OWNER_HOST="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          REPO_NAME="${GITHUB_REPOSITORY#*/}"
-          PAGES_URL="https://${OWNER_HOST}.github.io/${REPO_NAME}/pr/${PR_NUMBER}/"
+          export IPA_URL
+          SHIM_URL="$(python3 -c 'from urllib.parse import quote; import os; print("https://marginally-better-apps.github.io/Autoloader/?url=" + quote(os.environ["IPA_URL"], safe=""))')"
 
           gh release delete "${TAG}" --yes --cleanup-tag || true
           gh release create "${TAG}" "artifacts/${IPA_NAME}" \
@@ -128,40 +127,14 @@ jobs:
             --title "PR #${PR_NUMBER} unsigned IPA" \
             --notes "Autoloader preview for https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}"
 
-          python3 scripts/write-autoloader-page.py \
-            --ipa-url "${IPA_URL}" \
-            --output autoloader-page/index.html \
-            --title "Spatial Graffiti"
-
           echo "ipa-url=${IPA_URL}" >> "${GITHUB_OUTPUT}"
-          echo "pages-url=${PAGES_URL}" >> "${GITHUB_OUTPUT}"
-
-      - name: Publish GitHub Pages trampoline
-        if: steps.preview.outputs.pages-url
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          folder: autoloader-page
-          target-folder: pr/${{ github.event.pull_request.number }}
-          clean: false
-          branch: gh-pages
-          commit-message: "preview: Autoloader trampoline for PR ${{ github.event.pull_request.number }}"
-
-      - name: Enable GitHub Pages if needed
-        if: steps.preview.outputs.pages-url
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1 || \
-            echo '{"source":{"branch":"gh-pages","path":"/"}}' | \
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" --input - >/dev/null
+          echo "shim-url=${SHIM_URL}" >> "${GITHUB_OUTPUT}"
 
       - name: Update PR preview comment
-        if: steps.preview.outputs.pages-url
+        if: steps.preview.outputs.shim-url
         uses: actions/github-script@v7
         env:
-          PAGES_URL: ${{ steps.preview.outputs.pages-url }}
+          SHIM_URL: ${{ steps.preview.outputs.shim-url }}
           IPA_URL: ${{ steps.preview.outputs.ipa-url }}
         with:
           script: |
@@ -169,9 +142,9 @@ jobs:
             const body = `${marker}
             ## Install on a phone
 
-            [Open in Autoloader](${process.env.PAGES_URL})
+            [Open in Autoloader](${process.env.SHIM_URL})
 
-            GitHub will not make \`autoloader://\` tappable, so that link is HTTPS and bounces into Autoloader. If you are in the GitHub app and nothing happens, open the page in Safari.
+            GitHub will not make \`autoloader://\` tappable, so this uses the shared Autoloader HTTPS shim. If you are in the GitHub app and nothing happens, open the link in Safari.
 
             The unsigned IPA is also at [the PR preview release](${process.env.IPA_URL}). Sign it with your own certificate. Autoloader does that for you after the first setup.
 
