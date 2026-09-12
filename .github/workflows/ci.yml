@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.4.2
       - name: Install backend dependencies
         working-directory: server
         run: bun install --frozen-lockfile
@@ -124,7 +124,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: DerivedData/CI
-          key: ios-ci-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('package-lock.json', 'app.json', 'package.json', 'src/**', 'modules/**', 'plugins/**', 'locales/**', 'assets/**') }}
+          key: ios-ci-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('package-lock.json', 'app.json', 'package.json', '.env', 'src/**', 'modules/**', 'plugins/**', 'locales/**', 'assets/**') }}
           restore-keys: |
             ios-ci-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-
 

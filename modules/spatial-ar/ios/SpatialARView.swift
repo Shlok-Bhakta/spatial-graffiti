@@ -89,6 +89,6 @@ final class SpatialARView: ExpoView, SpatialARViewHost {
   }
 
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-    SpatialARController.shared.endStroke()
+    SpatialARController.shared.cancelStroke()
   }
 }

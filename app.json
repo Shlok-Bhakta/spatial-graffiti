@@ -38,7 +38,9 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Spatial Graffiti uses your location once to find nearby drawing sites. Location is not tracked in the background."
+          "locationWhenInUsePermission": "Spatial Graffiti uses your location once to find nearby drawing sites. Location is not tracked in the background.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false
         }
       ],
       [

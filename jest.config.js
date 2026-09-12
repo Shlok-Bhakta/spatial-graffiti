@@ -5,5 +5,6 @@ module.exports = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
-  testPathIgnorePatterns: ['/node_modules/', '/ios/', '/android/', '/server/'],
+  testPathIgnorePatterns: ['/node_modules/', '/ios/', '/android/', '/server/', '/DerivedData/'],
+  watchman: false,
 };

@@ -29,7 +29,6 @@ final class SpatialARController: NSObject, ARSessionDelegate {
   private var frozenPlane: FrozenPlane?
   private var lastScreenPoint: CGPoint?
   private var displayLink: CADisplayLink?
-  private var lastTracking: ARCamera.TrackingState?
   private var lastMapping: ARFrame.WorldMappingStatus?
 
   private override init() {
@@ -101,8 +100,8 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     cancelActiveStroke(keep: false)
     session.pause()
     status.mode = SpatialARMode.failed.rawValue
+    status.trackingReason = message
     emitIfChanged()
-    _ = message
   }
 
   func setRemoteStrokes(_ incoming: [SpatialARStroke]) {
@@ -209,6 +208,10 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     sampleActiveStroke(at: point)
   }
 
+  func cancelStroke() {
+    cancelActiveStroke(keep: false)
+  }
+
   func endStroke() {
     stopDisplayLink()
     lastScreenPoint = nil
@@ -264,7 +267,6 @@ final class SpatialARController: NSObject, ARSessionDelegate {
       }
     }
     session.pause()
-    lastTracking = nil
     lastMapping = nil
 
     status.tracking = "notAvailable"
@@ -378,7 +380,7 @@ final class SpatialARController: NSObject, ARSessionDelegate {
       return
     }
     if sceneRoot == nil {
-      let anchorEntity = AnchorEntity(rootAnchor)
+      let anchorEntity = AnchorEntity(anchor: rootAnchor)
       host.arView.scene.addAnchor(anchorEntity)
       let content = Entity()
       content.name = "spatial-graffiti-root-content"
@@ -577,10 +579,16 @@ final class SpatialARController: NSObject, ARSessionDelegate {
   func session(_ session: ARSession, didUpdate frame: ARFrame) {
     let tracking = frame.camera.trackingState
     let mapping = frame.worldMappingStatus
-    if lastTracking == tracking && lastMapping == mapping {
+    let mappedTracking = SpatialARMapping.tracking(from: tracking)
+    let mappedMapping = SpatialARMapping.mapping(from: mapping)
+    if
+      lastEmittedStatus?.tracking == mappedTracking.0,
+      lastEmittedStatus?.trackingReason == mappedTracking.1,
+      lastEmittedStatus?.mapping == mappedMapping,
+      lastMapping == mapping
+    {
       return
     }
-    lastTracking = tracking
     lastMapping = mapping
     DispatchQueue.main.async { [weak self] in
       self?.applyTracking(tracking, mapping: mapping)

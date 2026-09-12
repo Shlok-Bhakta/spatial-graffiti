@@ -144,10 +144,7 @@ enum SpatialARMapping {
   }
 
   static func isUsableForNewRoot(tracking: String, reason: String?) -> Bool {
-    if tracking == "normal" {
-      return true
-    }
-    return tracking == "limited" && reason != "relocalizing"
+    tracking == "normal"
   }
 }
 

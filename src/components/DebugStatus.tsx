@@ -11,9 +11,6 @@ type Props = {
 };
 
 export function DebugStatus({ phase, status, siteId, strokeCount, error }: Props) {
-  if (!__DEV__) {
-    return null;
-  }
   const shortSite = siteId ? siteId.slice(0, 8) : '—';
   return (
     <View pointerEvents="none" style={styles.box}>

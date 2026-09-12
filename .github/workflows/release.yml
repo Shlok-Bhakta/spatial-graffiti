@@ -104,7 +104,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: DerivedData/Release
-          key: ios-release-v3-${{ runner.os }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('package-lock.json', 'app.json', 'package.json', 'src/**', 'modules/**') }}
+          key: ios-release-v3-${{ runner.os }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('package-lock.json', 'app.json', 'package.json', '.env', 'src/**', 'modules/**') }}
           restore-keys: |
             ios-release-v3-${{ runner.os }}-${{ steps.xcode.outputs.cache-key }}-
 

@@ -70,7 +70,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: DerivedData/Archive
-          key: ios-archive-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('package-lock.json', 'app.json', 'package.json', 'src/**', 'modules/**', 'plugins/**', 'locales/**', 'assets/**') }}
+          key: ios-archive-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('package-lock.json', 'app.json', 'package.json', '.env', 'src/**', 'modules/**', 'plugins/**', 'locales/**', 'assets/**') }}
           restore-keys: |
             ios-archive-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-
 

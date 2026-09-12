@@ -75,6 +75,7 @@ class PullRequestWorkflowTests(unittest.TestCase):
         for build_input in (
             "package-lock.json",
             "app.json",
+            ".env",
             "src/**",
             "modules/**",
             "plugins/**",

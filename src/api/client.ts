@@ -56,6 +56,7 @@ export async function uploadWorldMap(siteId: string, fileUri: string): Promise<v
   const file = new File(fileUri);
   const result = await file.upload(apiUrl(`/v1/sites/${siteId}/world-map`), {
     httpMethod: 'PUT',
+    sessionType: 'foreground',
     headers: { 'Content-Type': 'application/octet-stream' },
   });
   if (result.status < 200 || result.status >= 300) {

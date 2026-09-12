@@ -101,7 +101,7 @@ enum StrokeRendering {
       return nil
     }
 
-    let mesh = MeshResource.generateCylinder(height: height, radius: radius)
+    let mesh = MeshResource.generateBox(width: radius * 2, height: height, depth: radius * 2)
     let entity = ModelEntity(mesh: mesh, materials: [material])
     entity.position = (start + end) / 2
     entity.orientation = rotation(from: SIMD3<Float>(0, 1, 0), to: direction)

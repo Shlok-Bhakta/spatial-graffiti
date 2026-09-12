@@ -15,8 +15,9 @@ import type { AppPhase, ARStatus, NearbySite, Stroke } from '@/types';
 import { canPublishWorldMap } from './mapping';
 
 const CANDIDATE_LIMIT = 3;
-const RELOCALIZE_TIMEOUT_MS = 14_000;
+const RELOCALIZE_TIMEOUT_MS = 15_000;
 const STROKE_POLL_MS = 10_000;
+const PUBLISH_RETRY_MS = 4000;
 
 function randomId(): string {
   return crypto.randomUUID();
@@ -38,6 +39,7 @@ export function useSiteSession(): SiteSession {
   const [siteId, setSiteId] = useState<string | null>(null);
   const [strokeCount, setStrokeCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [published, setPublished] = useState(false);
 
   const statusRef = useRef<ARStatus | null>(null);
   const siteIdRef = useRef<string | null>(null);
@@ -58,7 +60,7 @@ export function useSiteSession(): SiteSession {
         }
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      return statusRef.current;
+      return null;
     },
     [],
   );
@@ -78,10 +80,15 @@ export function useSiteSession(): SiteSession {
   const publishNewSite = useCallback(async () => {
     const id = siteIdRef.current;
     const current = statusRef.current;
+    const location = gpsRef.current;
     if (!id || !current || publishedRef.current || publishingRef.current) {
       return;
     }
-    if (current.mode !== 'ready' || !current.rootAnchorReady) {
+    if (current.mode !== 'ready' || !current.rootAnchorReady || current.siteId !== id) {
+      return;
+    }
+    if (!location) {
+      setError('GPS is required to publish this site. Nearby discovery will fail without it.');
       return;
     }
     if (!canPublishWorldMap(current.mapping, extendingSinceRef.current, Date.now())) {
@@ -91,16 +98,16 @@ export function useSiteSession(): SiteSession {
     try {
       const ar = getSpatialAR();
       const mapUri = await ar.exportWorldMap();
-      const location = gpsRef.current;
       await createSite({
         id,
-        latitude: location?.latitude ?? 0,
-        longitude: location?.longitude ?? 0,
-        horizontalAccuracyM: location?.horizontalAccuracyM ?? null,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        horizontalAccuracyM: location.horizontalAccuracyM,
         createdAt: new Date().toISOString(),
       });
       await uploadWorldMap(id, mapUri);
       publishedRef.current = true;
+      setPublished(true);
       await flushQueue(id);
     } catch (err) {
       console.error('new site publish failed', err);
@@ -116,13 +123,18 @@ export function useSiteSession(): SiteSession {
     setSiteId(id);
     setPhase('creating');
     publishedRef.current = false;
+    setPublished(false);
     const ar = getSpatialAR();
     await ar.resetSession();
     await ar.startNewSite(id);
-    await waitForStatus(
-      (next) => next.mode === 'ready' && next.rootAnchorReady,
+    const ready = await waitForStatus(
+      (next) =>
+        next.mode === 'ready' && next.rootAnchorReady && next.siteId === id,
       20_000,
     );
+    if (!ready) {
+      throw new Error('ARKit did not create a root anchor for the new site');
+    }
     setPhase('ready');
   }, [waitForStatus]);
 
@@ -143,13 +155,14 @@ export function useSiteSession(): SiteSession {
           next.siteId === candidate.id,
         RELOCALIZE_TIMEOUT_MS,
       );
-      if (!ready || ready.mode !== 'ready' || !ready.rootAnchorReady) {
+      if (!ready) {
         return false;
       }
       const strokes = await getStrokes(candidate.id);
       await ar.setRemoteStrokes(strokes);
       setStrokeCount(strokes.length);
       publishedRef.current = true;
+      setPublished(true);
       setPhase('ready');
       return true;
     },
@@ -166,7 +179,7 @@ export function useSiteSession(): SiteSession {
         setPhase('locating');
         const granted = await requestForegroundLocation();
         if (!granted) {
-          setError('Location permission denied. A new site will be created without GPS.');
+          setError('Location permission denied. Nearby sites cannot be discovered.');
         }
         const location = granted
           ? await getUsefulLocation().catch((err) => {
@@ -204,12 +217,17 @@ export function useSiteSession(): SiteSession {
   }, [startNewSite, tryCandidate]);
 
   useEffect(() => {
-    if (phase !== 'ready' || !siteId || !publishedRef.current) {
+    if (phase !== 'ready' || !siteId) {
       return;
     }
     const timer = setInterval(() => {
       void (async () => {
+        if (!publishedRef.current) {
+          await publishNewSite();
+          return;
+        }
         try {
+          await flushQueue(siteId);
           const strokes = await getStrokes(siteId);
           await getSpatialAR().setRemoteStrokes(strokes);
           setStrokeCount(strokes.length);
@@ -217,9 +235,9 @@ export function useSiteSession(): SiteSession {
           console.error('stroke poll failed', err);
         }
       })();
-    }, STROKE_POLL_MS);
+    }, published ? STROKE_POLL_MS : PUBLISH_RETRY_MS);
     return () => clearInterval(timer);
-  }, [phase, siteId]);
+  }, [flushQueue, phase, publishNewSite, published, siteId]);
 
   const onStatusChange = useCallback(
     (next: ARStatus) => {
@@ -232,32 +250,25 @@ export function useSiteSession(): SiteSession {
       } else if (next.mapping !== 'mapped') {
         extendingSinceRef.current = null;
       }
-      if (phase === 'creating' || (phase === 'ready' && !publishedRef.current)) {
+      if (!publishedRef.current) {
         void publishNewSite();
       }
     },
-    [phase, publishNewSite],
+    [publishNewSite],
   );
 
-  const onStrokeCompleted = useCallback(
-    (stroke: Stroke) => {
-      setStrokeCount((count) => count + 1);
-      const id = siteIdRef.current;
-      if (!id) {
-        queueRef.current.push(stroke);
-        return;
-      }
-      if (!publishedRef.current) {
-        queueRef.current.push(stroke);
-        return;
-      }
-      void createStroke(id, stroke).catch((err) => {
-        console.error('stroke upload failed', err);
-        queueRef.current.push(stroke);
-      });
-    },
-    [],
-  );
+  const onStrokeCompleted = useCallback((stroke: Stroke) => {
+    setStrokeCount((count) => count + 1);
+    const id = siteIdRef.current;
+    if (!id || !publishedRef.current) {
+      queueRef.current.push(stroke);
+      return;
+    }
+    void createStroke(id, stroke).catch((err) => {
+      console.error('stroke upload failed', err);
+      queueRef.current.push(stroke);
+    });
+  }, []);
 
   return {
     phase,

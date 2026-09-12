@@ -36,6 +36,14 @@ def main() -> int:
         print("error: UIDesignRequiresCompatibility opts out of Liquid Glass", file=sys.stderr)
         return 1
 
+    ats = info.get("NSAppTransportSecurity") or {}
+    domains = ats.get("NSExceptionDomains") or {}
+    kiwi = domains.get("kiwi.taildb44.ts.net") or {}
+    if kiwi.get("NSExceptionAllowsInsecureHTTPLoads") is not True:
+        print("error: kiwi.taildb44.ts.net must allow insecure HTTP for the POC backend", file=sys.stderr)
+        print(ats, file=sys.stderr)
+        return 1
+
     print(f"ok {app}")
     return 0
 

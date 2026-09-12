@@ -8,5 +8,15 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
-  "exclude": ["**/node_modules", "**/*.test.ts", "**/*.test.tsx", "server"]
+  "exclude": [
+    "**/node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "server",
+    "ios",
+    "android",
+    "DerivedData",
+    "build",
+    "dist"
+  ]
 }
