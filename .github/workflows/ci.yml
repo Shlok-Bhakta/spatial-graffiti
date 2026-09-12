@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Release policy tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Test semantic versioning
+        run: python3 scripts/test-semantic-version.py
+      - name: Test simulator selection
+        run: python3 scripts/test-select-simulator.py
+      - name: Test CI workflow safeguards
+        run: python3 scripts/test-ci-workflows.py
+      - name: Test Autoloader preview page
+        run: python3 scripts/test-write-autoloader-page.py
+      - name: Test app
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install backend dependencies
+        working-directory: server
+        run: bun install --frozen-lockfile
+      - name: Test backend
+        working-directory: server
+        run: bun test
+      - name: Typecheck backend
+        working-directory: server
+        run: bunx tsc --noEmit
+
+  ios:
+    name: iOS build (iPhone Simulator)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Select iOS 26 SDK Xcode
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          candidates=(/Applications/Xcode_26*.app /Applications/Xcode_27*.app)
+          if [[ ${#candidates[@]} -eq 0 ]]; then
+            echo "error: no Xcode 26+ install found" >&2
+            ls -d /Applications/Xcode*.app >&2 || true
+            exit 1
+          fi
+          XCODE_APP="$(printf '%s\n' "${candidates[@]}" | sort -V | tail -1)"
+          sudo xcode-select -s "${XCODE_APP}/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+
+      - name: Fingerprint Xcode toolchain
+        id: xcode
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          echo "cache-key=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Select and boot simulator
+        id: simulator
+        run: |
+          set -euo pipefail
+          DEVICE_ID="$(./scripts/select-simulator.py iPhone)"
+          echo "id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$DEVICE_ID" 2>/dev/null || true
+
+      - name: Generate iOS project
+        run: CI=1 npx expo prebuild --platform ios --no-install
+
+      - name: Cache CocoaPods
+        id: pods-cache
+        uses: actions/cache@v4
+        with:
+          path: ios/Pods
+          key: ios-pods-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', 'app.json', 'modules/**', 'plugins/**') }}
+          restore-keys: |
+            ios-pods-v1-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install CocoaPods
+        working-directory: ios
+        run: pod install
+
+      - name: Cache test build
+        id: test-build-cache
+        uses: actions/cache@v4
+        with:
+          path: DerivedData/CI
+          key: ios-ci-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('package-lock.json', 'app.json', 'package.json', 'src/**', 'modules/**', 'plugins/**', 'locales/**', 'assets/**') }}
+          restore-keys: |
+            ios-ci-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-
+
+      - name: Build app on cold cache
+        if: steps.test-build-cache.outputs.cache-hit != 'true'
+        env:
+          FORCE_BUNDLING: "1"
+          RCT_NO_LAUNCH_PACKAGER: "1"
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -workspace ios/SpatialGraffiti.xcworkspace \
+            -scheme SpatialGraffiti \
+            -configuration Release \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -derivedDataPath DerivedData/CI \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Verify bundled app without rebuilding
+        run: |
+          set -euo pipefail
+          xcrun simctl bootstatus "${{ steps.simulator.outputs.id }}" -b
+          APP="$(find DerivedData/CI/Build/Products -path '*iphonesimulator/SpatialGraffiti.app' -type d | head -1)"
+          test -n "$APP"
+          BUNDLE="$(find "$APP" \( -name '*.jsbundle' -o -name '*.hbc' \) | head -1)"
+          test -n "$BUNDLE"
+          python3 scripts/test-built-app.py "$APP"
+
+      - name: Verify universal iOS device family
+        run: |
+          set -euo pipefail
+          FAMILY="$(xcodebuild -workspace ios/SpatialGraffiti.xcworkspace -scheme SpatialGraffiti -showBuildSettings | awk -F ' = ' '/TARGETED_DEVICE_FAMILY/{print $2; exit}')"
+          test "$FAMILY" = "1,2"

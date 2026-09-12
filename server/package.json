@@ -1,0 +1,17 @@
+{
+  "name": "spatial-graffiti-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "build": "bun build --compile --target=bun-linux-x64-baseline ./src/index.ts --outfile ./dist/spatial-graffiti-server",
+    "build:arm64": "bun build --compile --target=bun-linux-arm64 ./src/index.ts --outfile ./dist/spatial-graffiti-server-arm64"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "5.9.3"
+  }
+}

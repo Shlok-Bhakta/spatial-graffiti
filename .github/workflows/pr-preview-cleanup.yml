@@ -1,0 +1,46 @@
+name: PR preview cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete preview release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: pr-${{ github.event.pull_request.number }}
+        run: gh release delete "${TAG}" --yes --cleanup-tag || true
+
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+        continue-on-error: true
+
+      - name: Remove trampoline page
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ ! -d ".git" ]]; then
+            echo "gh-pages is not checked out; nothing to remove."
+            exit 0
+          fi
+          if [[ ! -d "pr/${PR_NUMBER}" ]]; then
+            echo "No trampoline for PR ${PR_NUMBER}."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -rf "pr/${PR_NUMBER}"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "preview: remove Autoloader trampoline for PR ${PR_NUMBER}"
+          git push

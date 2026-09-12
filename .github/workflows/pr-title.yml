@@ -1,0 +1,30 @@
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-title:
+    name: Validate release title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          if [[ "$PR_TITLE" =~ ^fix(\([^\)]+\))?:[[:space:]].+ ]] || \
+             [[ "$PR_TITLE" =~ ^feat(\([^\)]+\))?(!)?:[[:space:]].+ ]]; then
+            exit 0
+          fi
+
+          echo "This title will not create a release: $PR_TITLE"
+          echo "That is valid. Release titles are fix:, feat:, or feat!: (scopes are allowed)."

@@ -1,0 +1,50 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Python tooling
+__pycache__/
+*.pyc
+
+# Maestro
+.maestro/
+artifacts/
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.tsbuildinfo
+.env*.local
+
+# generated native folders
+/android
+/ios
+
+# Metro
+.metro-health-check*
+
+# Bun / server
+server/node_modules/
+server/dist/
+server/data/
+server/*.sqlite
+server/*.sqlite-*
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

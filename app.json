@@ -1,0 +1,66 @@
+{
+  "expo": {
+    "name": "SpatialGraffiti",
+    "slug": "spatial-graffiti",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "spatialgraffiti",
+    "userInterfaceStyle": "dark",
+    "platforms": ["ios"],
+    "ios": {
+      "bundleIdentifier": "com.shlok.spatialgraffiti",
+      "buildNumber": "0",
+      "supportsTablet": true,
+      "entitlements": {
+        "com.apple.developer.default-data-protection": "NSFileProtectionComplete"
+      },
+      "infoPlist": {
+        "CFBundleDisplayName": "Spatial Graffiti",
+        "LSApplicationCategoryType": "public.app-category.entertainment",
+        "NSCameraUsageDescription": "Spatial Graffiti uses the camera for AR world tracking so drawings stay attached to real surfaces.",
+        "NSLocationWhenInUseUsageDescription": "Spatial Graffiti uses your location once to find nearby drawing sites. Location is not tracked in the background.",
+        "NSLocalNetworkUsageDescription": "Spatial Graffiti talks to a local development server on your network.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "kiwi.taildb44.ts.net": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSIncludesSubdomains": false
+            }
+          }
+        }
+      },
+      "bitcode": false
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Spatial Graffiti uses your location once to find nearby drawing sites. Location is not tracked in the background."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0"
+          }
+        }
+      ],
+      "./plugins/withIosGraffiti.js",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#100e14",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 76
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

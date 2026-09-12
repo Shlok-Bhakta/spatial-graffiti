@@ -1,0 +1,148 @@
+name: Tagless release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tagless-release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build semantic unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          KIND="$(./scripts/semantic-version.py --kind HEAD)"
+          VERSION="$(./scripts/semantic-version.py HEAD)"
+
+          if [[ "$EVENT_NAME" = "workflow_dispatch" ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "kind=manual" >> "$GITHUB_OUTPUT"
+          elif [[ "$KIND" != "none" ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "kind=$KIND" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "kind=none" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Explain non-release commit
+        if: steps.release.outputs.build != 'true'
+        run: echo "The main commit is not fix:, feat:, or feat!:; no release artifact will be built."
+
+      - name: Select iOS 26 SDK Xcode
+        if: steps.release.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          candidates=(/Applications/Xcode_26*.app /Applications/Xcode_27*.app)
+          if [[ ${#candidates[@]} -eq 0 ]]; then
+            echo "error: no Xcode 26+ install found" >&2
+            ls -d /Applications/Xcode*.app >&2 || true
+            exit 1
+          fi
+          XCODE_APP="$(printf '%s\n' "${candidates[@]}" | sort -V | tail -1)"
+          sudo xcode-select -s "${XCODE_APP}/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - uses: actions/setup-node@v4
+        if: steps.release.outputs.build == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        if: steps.release.outputs.build == 'true'
+        run: npm ci
+
+      - name: Fingerprint Xcode toolchain
+        if: steps.release.outputs.build == 'true'
+        id: xcode
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          echo "cache-key=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Generate iOS project
+        if: steps.release.outputs.build == 'true'
+        run: CI=1 npx expo prebuild --platform ios --no-install
+
+      - name: Cache CocoaPods
+        if: steps.release.outputs.build == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ios/Pods
+          key: ios-pods-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', 'app.json', 'modules/**', 'plugins/**') }}
+          restore-keys: |
+            ios-pods-v1-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install CocoaPods
+        if: steps.release.outputs.build == 'true'
+        working-directory: ios
+        run: pod install
+
+      - name: Cache DerivedData
+        if: steps.release.outputs.build == 'true'
+        uses: actions/cache@v4
+        with:
+          path: DerivedData/Release
+          key: ios-release-v3-${{ runner.os }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('package-lock.json', 'app.json', 'package.json', 'src/**', 'modules/**') }}
+          restore-keys: |
+            ios-release-v3-${{ runner.os }}-${{ steps.xcode.outputs.cache-key }}-
+
+      - name: Archive without signing
+        if: steps.release.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          RCT_NO_LAUNCH_PACKAGER: "1"
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -workspace ios/SpatialGraffiti.xcworkspace \
+            -scheme SpatialGraffiti \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/SpatialGraffiti.xcarchive" \
+            -derivedDataPath "$PWD/DerivedData/Release" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}"
+
+      - name: Package IPA
+        if: steps.release.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./scripts/package-ipa.sh build/SpatialGraffiti.xcarchive "artifacts/Spatial-Graffiti-v${VERSION}-unsigned.ipa"
+          ./scripts/assert-embedded-bundle.sh "artifacts/Spatial-Graffiti-v${VERSION}-unsigned.ipa"
+
+      - name: Upload tagless release artifact
+        if: steps.release.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Spatial-Graffiti-v${{ steps.release.outputs.version }}-unsigned
+          path: artifacts/Spatial-Graffiti-v${{ steps.release.outputs.version }}-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30

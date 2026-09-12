@@ -1,0 +1,13 @@
+services:
+  spatial-graffiti:
+    pull_policy: build
+    build: .
+    container_name: spatial-graffiti
+    restart: unless-stopped
+    ports:
+      - 38420:3000
+    environment:
+      PORT: "3000"
+      DB_PATH: /data/graffiti.sqlite
+    volumes:
+      - ./data:/data

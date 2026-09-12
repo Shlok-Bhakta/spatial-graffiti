@@ -1,0 +1,197 @@
+name: PR unsigned IPA
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  ipa:
+    name: Build unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Select iOS 26 SDK Xcode
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          candidates=(/Applications/Xcode_26*.app /Applications/Xcode_27*.app)
+          if [[ ${#candidates[@]} -eq 0 ]]; then
+            echo "error: no Xcode 26+ install found" >&2
+            ls -d /Applications/Xcode*.app >&2 || true
+            exit 1
+          fi
+          XCODE_APP="$(printf '%s\n' "${candidates[@]}" | sort -V | tail -1)"
+          sudo xcode-select -s "${XCODE_APP}/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Fingerprint Xcode toolchain
+        id: xcode
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          echo "cache-key=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Generate iOS project
+        run: CI=1 npx expo prebuild --platform ios --no-install
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: ios/Pods
+          key: ios-pods-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', 'app.json', 'modules/**', 'plugins/**') }}
+          restore-keys: |
+            ios-pods-v1-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install CocoaPods
+        working-directory: ios
+        run: pod install
+
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          path: DerivedData/Archive
+          key: ios-archive-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('package-lock.json', 'app.json', 'package.json', 'src/**', 'modules/**', 'plugins/**', 'locales/**', 'assets/**') }}
+          restore-keys: |
+            ios-archive-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.cache-key }}-
+
+      - name: Archive without signing
+        run: |
+          set -euo pipefail
+          RCT_NO_LAUNCH_PACKAGER=1 xcodebuild archive \
+            -workspace ios/SpatialGraffiti.xcworkspace \
+            -scheme SpatialGraffiti \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/SpatialGraffiti.xcarchive" \
+            -derivedDataPath "$PWD/DerivedData/Archive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}"
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          ./scripts/package-ipa.sh build/SpatialGraffiti.xcarchive artifacts/Spatial-Graffiti-unsigned.ipa
+          ./scripts/assert-embedded-bundle.sh artifacts/Spatial-Graffiti-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Spatial-Graffiti-PR-${{ github.event.pull_request.number || github.run_number }}-unsigned
+          path: artifacts/Spatial-Graffiti-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish Autoloader preview
+        id: preview
+        if: github.event.pull_request && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          TAG="pr-${PR_NUMBER}"
+          IPA_NAME="Spatial-Graffiti-unsigned.ipa"
+          IPA_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/${IPA_NAME}"
+          OWNER_HOST="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          PAGES_URL="https://${OWNER_HOST}.github.io/${REPO_NAME}/pr/${PR_NUMBER}/"
+
+          gh release delete "${TAG}" --yes --cleanup-tag || true
+          gh release create "${TAG}" "artifacts/${IPA_NAME}" \
+            --prerelease \
+            --latest=false \
+            --target "${HEAD_SHA}" \
+            --title "PR #${PR_NUMBER} unsigned IPA" \
+            --notes "Autoloader preview for https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}"
+
+          python3 scripts/write-autoloader-page.py \
+            --ipa-url "${IPA_URL}" \
+            --output autoloader-page/index.html \
+            --title "Spatial Graffiti"
+
+          echo "ipa-url=${IPA_URL}" >> "${GITHUB_OUTPUT}"
+          echo "pages-url=${PAGES_URL}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub Pages trampoline
+        if: steps.preview.outputs.pages-url
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: autoloader-page
+          target-folder: pr/${{ github.event.pull_request.number }}
+          clean: false
+          branch: gh-pages
+          commit-message: "preview: Autoloader trampoline for PR ${{ github.event.pull_request.number }}"
+
+      - name: Enable GitHub Pages if needed
+        if: steps.preview.outputs.pages-url
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1 || \
+            echo '{"source":{"branch":"gh-pages","path":"/"}}' | \
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" --input - >/dev/null
+
+      - name: Update PR preview comment
+        if: steps.preview.outputs.pages-url
+        uses: actions/github-script@v7
+        env:
+          PAGES_URL: ${{ steps.preview.outputs.pages-url }}
+          IPA_URL: ${{ steps.preview.outputs.ipa-url }}
+        with:
+          script: |
+            const marker = '<!-- autoloader-pr-preview -->';
+            const body = `${marker}
+            ## Install on a phone
+
+            [Open in Autoloader](${process.env.PAGES_URL})
+
+            GitHub will not make \`autoloader://\` tappable, so that link is HTTPS and bounces into Autoloader. If you are in the GitHub app and nothing happens, open the page in Safari.
+
+            The unsigned IPA is also at [the PR preview release](${process.env.IPA_URL}). Sign it with your own certificate. Autoloader does that for you after the first setup.
+
+            _Built from \`${context.payload.pull_request.head.sha.slice(0, 7)}\`._`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const previous = comments.find((comment) =>
+              comment.user?.type === 'Bot' && comment.body.includes(marker)
+            );
+            const params = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            };
+            if (previous) {
+              await github.rest.issues.updateComment({ ...params, comment_id: previous.id });
+            } else {
+              await github.rest.issues.createComment({ ...params, issue_number: context.issue.number });
+            }
