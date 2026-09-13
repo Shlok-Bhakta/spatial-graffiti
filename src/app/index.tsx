@@ -5,6 +5,7 @@ import { SpatialARView } from '@/ar/native';
 import { DEFAULT_STROKE_WIDTH_M, PALETTE, type PaletteColor } from '@/colors';
 import { ColorPicker } from '@/components/ColorPicker';
 import { DebugStatus } from '@/components/DebugStatus';
+import { ServerStatus } from '@/components/ServerStatus';
 import { useSiteSession } from '@/site/useSiteSession';
 
 export default function DrawScreen() {
@@ -45,6 +46,7 @@ export default function DrawScreen() {
           strokeCount={session.strokeCount}
           error={session.error}
         />
+        <ServerStatus />
         <ColorPicker selected={color} onSelect={setColor} />
       </View>
     </View>

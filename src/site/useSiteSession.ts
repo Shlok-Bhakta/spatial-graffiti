@@ -9,6 +9,7 @@ import {
   uploadWorldMap,
 } from '@/api/client';
 import { getSpatialAR } from '@/ar/native';
+import { randomId } from '@/id';
 import { getUsefulLocation, requestForegroundLocation, type GpsFix } from '@/location';
 import type { AppPhase, ARStatus, NearbySite, Stroke } from '@/types';
 
@@ -18,10 +19,6 @@ const CANDIDATE_LIMIT = 3;
 const RELOCALIZE_TIMEOUT_MS = 15_000;
 const STROKE_POLL_MS = 10_000;
 const PUBLISH_RETRY_MS = 4000;
-
-function randomId(): string {
-  return crypto.randomUUID();
-}
 
 export type SiteSession = {
   phase: AppPhase;

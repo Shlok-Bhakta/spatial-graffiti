@@ -24,15 +24,23 @@ class HttpError extends Error {
 
 export function createApp(db: AppDb) {
   return async (req: Request): Promise<Response> => {
+    const started = Date.now();
+    const path = new URL(req.url).pathname;
+    let response: Response;
     try {
-      return await route(req, db);
+      response = await route(req, db);
     } catch (err) {
       if (err instanceof HttpError) {
-        return json(err.status, { error: err.message });
+        response = json(err.status, { error: err.message });
+      } else {
+        console.error(err);
+        response = json(500, { error: "internal error" });
       }
-      console.error(err);
-      return json(500, { error: "internal error" });
     }
+    if (!(req.method === "GET" && normalizePath(path) === "/health")) {
+      console.log(`${req.method} ${normalizePath(path)} ${response.status} ${Date.now() - started}ms`);
+    }
+    return response;
   };
 }
 
