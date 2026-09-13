@@ -124,7 +124,7 @@ If the app dies before the world map is uploaded, that unsynced site is gone. Th
 
 Copied from [MB-QR-Code-Scanner](https://github.com/Marginally-Better-Apps/MB-QR-Code-Scanner): npm + Expo prebuild + unsigned `xcodebuild` + Autoloader preview.
 
-PRs publish `pr-<n>` with `Spatial-Graffiti-unsigned.ipa` and a GitHub Pages trampoline. See [docs/AUTOLOADER_DEV_CYCLE.md](docs/AUTOLOADER_DEV_CYCLE.md).
+PRs publish `pr-<n>` with `Spatial-Graffiti-unsigned.ipa` and comment the shared Autoloader shim. See [docs/AUTOLOADER_DEV_CYCLE.md](docs/AUTOLOADER_DEV_CYCLE.md).
 
 On `main`, only `fix:`, `feat:`, and `feat!:` titles build a tagless release artifact.
 

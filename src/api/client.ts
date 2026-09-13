@@ -15,6 +15,13 @@ export function apiUrl(path: string): string {
   return `${base}${path}`;
 }
 
+export function apiHostLabel(baseUrl = apiBaseUrl()): string {
+  if (!baseUrl) {
+    return 'API unset';
+  }
+  return baseUrl.replace(/^https?:\/\//, '');
+}
+
 async function readJson<T>(response: Response, label: string): Promise<T> {
   if (!response.ok) {
     const body = await response.text();
@@ -23,9 +30,20 @@ async function readJson<T>(response: Response, label: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function getHealth(): Promise<{ ok: boolean }> {
-  const response = await fetch(apiUrl('/health'));
-  return readJson(response, 'health');
+export async function getHealth(timeoutMs = 4000): Promise<{ ok: boolean }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(apiUrl('/health'), { signal: controller.signal });
+    return await readJson(response, 'health');
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`health timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function getNearbySites(
