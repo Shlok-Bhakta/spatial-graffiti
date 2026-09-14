@@ -33,6 +33,10 @@ final class SpatialARView: ExpoView, SpatialARViewHost {
     arView.renderOptions.insert(.disableMotionBlur)
     arView.renderOptions.insert(.disableDepthOfField)
     arView.renderOptions.insert(.disablePersonOcclusion)
+    // LiDAR mesh occlusion: virtual strokes behind reconstructed geometry
+    // (walls, furniture) are hidden instead of showing through. No-op on
+    // non-LiDAR devices where sceneReconstruction is unsupported.
+    arView.environment.sceneUnderstanding.options.insert(.occlusion)
     addSubview(arView)
 
     SpatialARController.shared.currentColor = strokeColor

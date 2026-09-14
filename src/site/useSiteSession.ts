@@ -4,8 +4,10 @@ import {
   createSite,
   createStroke,
   downloadWorldMap,
+  downloadWorldMapVersion,
   getNearbySites,
   getStrokes,
+  getWorldMapHistory,
   uploadWorldMap,
 } from '@/api/client';
 import { getSpatialAR } from '@/ar/native';
@@ -43,7 +45,6 @@ export function useSiteSession(): SiteSession {
   const publishedRef = useRef(false);
   const publishingRef = useRef(false);
   const queueRef = useRef<Stroke[]>([]);
-  const extendingSinceRef = useRef<number | null>(null);
   const startedRef = useRef(false);
   const gpsRef = useRef<GpsFix | null>(null);
 
@@ -88,7 +89,7 @@ export function useSiteSession(): SiteSession {
       setError('GPS is required to publish this site. Nearby discovery will fail without it.');
       return;
     }
-    if (!canPublishWorldMap(current.mapping, extendingSinceRef.current, Date.now())) {
+    if (!canPublishWorldMap(current.mapping)) {
       return;
     }
     publishingRef.current = true;
@@ -140,28 +141,50 @@ export function useSiteSession(): SiteSession {
       setPhase('relocalizing');
       siteIdRef.current = candidate.id;
       setSiteId(candidate.id);
-      const ar = getSpatialAR();
-      await ar.resetSession();
-      const mapUri = await downloadWorldMap(candidate.id);
-      await ar.loadSite(candidate.id, mapUri);
-      const ready = await waitForStatus(
-        (next) =>
-          next.mode === 'ready' &&
-          next.rootAnchorReady &&
-          next.tracking === 'normal' &&
-          next.siteId === candidate.id,
-        RELOCALIZE_TIMEOUT_MS,
-      );
-      if (!ready) {
-        return false;
+      // Latest map first, then one previous version: a bad overwrite no
+      // longer nukes the site because history survives on the server.
+      const mapUris: string[] = [];
+      try {
+        mapUris.push(await downloadWorldMap(candidate.id));
+      } catch (err) {
+        console.error('latest world map download failed', candidate.id, err);
       }
-      const strokes = await getStrokes(candidate.id);
-      await ar.setRemoteStrokes(strokes);
-      setStrokeCount(strokes.length);
-      publishedRef.current = true;
-      setPublished(true);
-      setPhase('ready');
-      return true;
+      try {
+        const history = await getWorldMapHistory(candidate.id);
+        if (history.length > 0) {
+          mapUris.push(await downloadWorldMapVersion(candidate.id, history[0].sha256));
+        }
+      } catch (err) {
+        console.error('world map history download failed', candidate.id, err);
+      }
+      for (const mapUri of mapUris) {
+        try {
+          const ar = getSpatialAR();
+          await ar.resetSession();
+          await ar.loadSite(candidate.id, mapUri);
+          const ready = await waitForStatus(
+            (next) =>
+              next.mode === 'ready' &&
+              next.rootAnchorReady &&
+              next.tracking === 'normal' &&
+              next.siteId === candidate.id,
+            RELOCALIZE_TIMEOUT_MS,
+          );
+          if (!ready) {
+            continue;
+          }
+          const strokes = await getStrokes(candidate.id);
+          await ar.setRemoteStrokes(strokes);
+          setStrokeCount(strokes.length);
+          publishedRef.current = true;
+          setPublished(true);
+          setPhase('ready');
+          return true;
+        } catch (err) {
+          console.error('candidate map failed', candidate.id, mapUri, err);
+        }
+      }
+      return false;
     },
     [waitForStatus],
   );
@@ -240,13 +263,6 @@ export function useSiteSession(): SiteSession {
     (next: ARStatus) => {
       statusRef.current = next;
       setStatus(next);
-      if (next.mapping === 'extending') {
-        if (extendingSinceRef.current == null) {
-          extendingSinceRef.current = Date.now();
-        }
-      } else if (next.mapping !== 'mapped') {
-        extendingSinceRef.current = null;
-      }
       if (!publishedRef.current) {
         void publishNewSite();
       }
