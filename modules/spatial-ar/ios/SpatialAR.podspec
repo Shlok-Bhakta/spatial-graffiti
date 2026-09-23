@@ -12,5 +12,5 @@ Pod::Spec.new do |s|
   s.swift_version = '5.9'
   s.dependency 'ExpoModulesCore'
   s.source_files = '*.swift'
-  s.frameworks = 'ARKit', 'RealityKit', 'UIKit', 'AVFoundation'
+  s.frameworks = 'ARKit', 'RealityKit', 'UIKit', 'AVFoundation', 'Vision'
 end

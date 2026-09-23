@@ -118,7 +118,7 @@ The simulator can check UI and API code. It cannot prove AR.
 5. Publish a site (wait until mapping is `mapped` or `extending` for several seconds). Kill the app. Reopen it in the same place. After relocalization the drawing returns.
 6. A second iPhone on the same backend should find the site and see the same line.
 
-If the app dies before the world map is uploaded, that unsynced site is gone. There is no phone-side database.
+The app keeps room maps and an append-only stroke journal in the phone's Documents directory. It retries uploads after relaunch. See [room recovery and its physical test](docs/LOCALIZATION.md).
 
 ## CI
 
@@ -131,6 +131,6 @@ On `main`, only `fix:`, `feat:`, and `feat!:` titles build a tagless release art
 ## Known limits
 
 - No live multi-user stroke sync. A 10 second poll loads strokes already on the server.
-- Relocalization can fail. The app tries the nearest 3 sites, then starts a new one.
-- GPS accuracy can put you in the wrong site if two mapped rooms are close.
+- Relocalization can still fail when the room has changed or lacks visual features. The app offers room choices and does not silently replace the room.
+- Older rooms have no Vision feature prints until someone visits them with a new build. Room choice falls back to the last used room and distance.
 - AR persistence has to be tested on a phone. The agent cannot claim it passed from a simulator.

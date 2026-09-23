@@ -14,6 +14,7 @@ final class SpatialARController: NSObject, ARSessionDelegate {
   private var restoringWorldMap = false
   private var loadedWorldMap = false
   private var creatingRoot = false
+  private var drawingEnabled = false
 
   private var rootAnchor: ARAnchor?
   private var rootEntity: Entity?
@@ -72,6 +73,19 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     emitIfChanged()
   }
 
+  func startDiscovery(cameraGranted: Bool) throws {
+    beginFreshSession()
+    if !cameraGranted {
+      fail("Camera access is required for room discovery")
+      throw SpatialARError.cameraDenied
+    }
+    guard ARWorldTrackingConfiguration.isSupported else {
+      throw SpatialARError.unsupported
+    }
+    runWorldTracking(worldMap: nil)
+    emitIfChanged()
+  }
+
   func loadSite(siteId: String, worldMap: ARWorldMap, cameraGranted: Bool) throws {
     beginFreshSession()
     status.siteId = siteId
@@ -94,6 +108,19 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     beginFreshSession()
     status.mode = SpatialARMode.starting.rawValue
     emitIfChanged()
+  }
+
+  func setDrawingEnabled(_ enabled: Bool) {
+    drawingEnabled = enabled && status.mode == SpatialARMode.ready.rawValue
+    status.drawingEnabled = drawingEnabled
+    emitIfChanged()
+  }
+
+  func captureFeaturePrint() throws -> String {
+    guard let frame = Isolation.onMain({ self.session.currentFrame }) else {
+      throw SpatialARError.featurePrintFailed("The camera has not produced a frame yet")
+    }
+    return try SpatialARVision.capture(frame: frame)
   }
 
   func fail(_ message: String) {
@@ -243,6 +270,7 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     restoringWorldMap = false
     loadedWorldMap = false
     creatingRoot = false
+    drawingEnabled = false
     rootAnchor = nil
     rootEntity?.removeFromParent()
     rootEntity = nil
@@ -275,6 +303,7 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     status.mode = SpatialARMode.starting.rawValue
     status.siteId = nil
     status.rootAnchorReady = false
+    status.drawingEnabled = false
     lastEmittedStatus = nil
   }
 
@@ -298,7 +327,7 @@ final class SpatialARController: NSObject, ARSessionDelegate {
   }
 
   private var canDraw: Bool {
-    status.mode == SpatialARMode.ready.rawValue && status.rootAnchorReady && rootAnchor != nil
+    status.mode == SpatialARMode.ready.rawValue && status.rootAnchorReady && rootAnchor != nil && drawingEnabled
   }
 
   private func rootAnchorName() -> String? {

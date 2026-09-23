@@ -26,6 +26,14 @@ CREATE TABLE IF NOT EXISTS strokes (
     FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_strokes_site ON strokes(site_id);
+CREATE TABLE IF NOT EXISTS feature_prints (
+    id TEXT PRIMARY KEY,
+    site_id TEXT NOT NULL,
+    data BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_feature_prints_site ON feature_prints(site_id);
 `;
 
 export type SiteRow = {
@@ -46,6 +54,7 @@ export type NearbyRow = {
   longitude: number;
   horizontal_accuracy_m: number | null;
   created_at: string;
+  stroke_count: number;
 };
 
 export type StrokeRow = {
@@ -60,6 +69,13 @@ export type StrokeRow = {
 export type WorldMapMeta = {
   world_map_sha256: string | null;
   world_map_bytes: number | null;
+};
+
+export type FeaturePrintRow = {
+  id: string;
+  site_id: string;
+  data: Uint8Array;
+  created_at: string;
 };
 
 export type AppDb = ReturnType<typeof openDb>;
@@ -99,11 +115,13 @@ export function openDb(path: string) {
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
   const nearbyStmt = db.query(
-    `SELECT id, latitude, longitude, horizontal_accuracy_m, created_at
+    `SELECT sites.id, sites.latitude, sites.longitude, sites.horizontal_accuracy_m, sites.created_at,
+            (SELECT COUNT(*) FROM strokes WHERE strokes.site_id = sites.id) AS stroke_count
      FROM sites
-     WHERE latitude BETWEEN ? AND ?
-       AND longitude BETWEEN ? AND ?
-       AND world_map IS NOT NULL`,
+     WHERE sites.latitude BETWEEN ? AND ?
+       AND sites.longitude BETWEEN ? AND ?
+       AND sites.world_map IS NOT NULL
+       AND sites.world_map_bytes >= 1024`,
   );
   const updateWorldMapStmt = db.query(
     `UPDATE sites
@@ -127,6 +145,17 @@ export function openDb(path: string) {
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
   const countStrokesStmt = db.query(`SELECT COUNT(*) AS n FROM strokes WHERE site_id = ?`);
+  const listFeaturePrintsStmt = db.query(
+    `SELECT id, site_id, data, created_at FROM feature_prints WHERE site_id = ? ORDER BY created_at DESC, id DESC LIMIT 8`,
+  );
+  const insertFeaturePrintStmt = db.query(
+    `INSERT OR IGNORE INTO feature_prints (id, site_id, data, created_at) VALUES (?, ?, ?, ?)`,
+  );
+  const trimFeaturePrintsStmt = db.query(
+    `DELETE FROM feature_prints WHERE site_id = ? AND id NOT IN (
+      SELECT id FROM feature_prints WHERE site_id = ? ORDER BY created_at DESC, id DESC LIMIT 8
+    )`,
+  );
 
   return {
     close() {
@@ -188,6 +217,18 @@ export function openDb(path: string) {
     countStrokes(siteId: string): number {
       const row = countStrokesStmt.get(siteId) as { n: number } | null;
       return row?.n ?? 0;
+    },
+    listFeaturePrints(siteId: string): FeaturePrintRow[] {
+      return (listFeaturePrintsStmt.all(siteId) as FeaturePrintRow[]).map((row) => ({
+        ...row,
+        data: asBytes(row.data) ?? new Uint8Array(),
+      }));
+    },
+    insertFeaturePrint(siteId: string, id: string, data: Uint8Array, createdAt: string) {
+      db.transaction(() => {
+        insertFeaturePrintStmt.run(id, siteId, data, createdAt);
+        trimFeaturePrintsStmt.run(siteId, siteId);
+      })();
     },
     clear() {
       db.exec("DELETE FROM strokes");

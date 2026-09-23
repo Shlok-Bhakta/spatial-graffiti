@@ -28,6 +28,7 @@ struct SpatialARStatus: Equatable {
   var mode = SpatialARMode.starting.rawValue
   var siteId: String?
   var rootAnchorReady = false
+  var drawingEnabled = false
 
   func dictionary() -> [String: Any] {
     var payload: [String: Any] = [
@@ -35,6 +36,7 @@ struct SpatialARStatus: Equatable {
       "mapping": mapping,
       "mode": mode,
       "rootAnchorReady": rootAnchorReady,
+      "drawingEnabled": drawingEnabled,
     ]
     if let trackingReason {
       payload["trackingReason"] = trackingReason
@@ -86,6 +88,7 @@ enum SpatialARError: LocalizedError {
   case noRootAnchor
   case worldMapInvalid(String)
   case exportFailed(String)
+  case featurePrintFailed(String)
 
   var errorDescription: String? {
     switch self {
@@ -98,6 +101,8 @@ enum SpatialARError: LocalizedError {
     case .worldMapInvalid(let message):
       return message
     case .exportFailed(let message):
+      return message
+    case .featurePrintFailed(let message):
       return message
     }
   }

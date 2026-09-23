@@ -16,6 +16,7 @@ export type ARStatus = {
   mode: 'starting' | 'newSite' | 'relocalizing' | 'ready' | 'failed';
   siteId?: string;
   rootAnchorReady: boolean;
+  drawingEnabled: boolean;
 };
 
 export type DebugState = ARStatus & {

@@ -12,6 +12,7 @@ const MAX_WIDTH_M = 0.1;
 const DEFAULT_RADIUS_M = 100;
 const MAX_RADIUS_M = 500;
 const COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const MAX_FEATURE_PRINT_BYTES = 64 * 1024;
 
 class HttpError extends Error {
   constructor(
@@ -70,6 +71,33 @@ async function route(req: Request, db: AppDb): Promise<Response> {
     }
     if (method === "POST") {
       return createStroke(req, db, strokesId);
+    }
+  }
+
+  const featurePrintSiteId = matchSegment(path, "/v1/sites/", "/feature-prints");
+  if (featurePrintSiteId) {
+    if (method === "GET") {
+      if (!db.findSite(featurePrintSiteId)) throw new HttpError(404, "site not found");
+      return json(200, {
+        featurePrints: db.listFeaturePrints(featurePrintSiteId).map((row) => ({
+          id: row.id,
+          data: Buffer.from(row.data).toString("base64"),
+        })),
+      });
+    }
+    if (method === "POST") {
+      if (!db.findSite(featurePrintSiteId)) throw new HttpError(404, "site not found");
+      const body = await readJson(req);
+      if (!isRecord(body) || typeof body.id !== "string" || body.id.length > 100 || body.id.length === 0 ||
+          typeof body.data !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.data)) {
+        throw new HttpError(400, "invalid feature print");
+      }
+      const bytes = Buffer.from(body.data, "base64");
+      if (bytes.length < 64 || bytes.length > MAX_FEATURE_PRINT_BYTES || bytes.toString("base64") !== body.data) {
+        throw new HttpError(400, "invalid feature print");
+      }
+      db.insertFeaturePrint(featurePrintSiteId, body.id, bytes, new Date().toISOString());
+      return json(200, { ok: true });
     }
   }
 
@@ -299,6 +327,7 @@ function toNearbySite(row: NearbyRow, lat: number, lon: number) {
     latitude: row.latitude,
     longitude: row.longitude,
     horizontalAccuracyM: row.horizontal_accuracy_m,
+    strokeCount: row.stroke_count,
     distanceM: haversineM(lat, lon, row.latitude, row.longitude),
     createdAt: row.created_at,
   };

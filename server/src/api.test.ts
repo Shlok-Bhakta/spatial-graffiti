@@ -51,13 +51,20 @@ describe("POST /v1/sites", () => {
 });
 
 describe("GET /v1/sites/nearby", () => {
+  test("does not offer tiny invalid maps as rooms", async () => {
+    const site = await insertSite(ORIGIN);
+    expect((await putWorldMap(site.id, arbitraryBytes())).status).toBe(204);
+    expect((await readNearby(await nearby(ORIGIN, 100))).sites).toHaveLength(0);
+  });
   test("nearby site returned inside radius", async () => {
     const site = await insertMappedSite(shiftLat(ORIGIN, 20));
+    expect((await postStroke(site.id, sampleStroke(site.id))).status).toBe(200);
     const res = await nearby(ORIGIN, 100);
     expect(res.status).toBe(200);
     const body = await readNearby(res);
     expect(body.sites).toHaveLength(1);
     expect(body.sites[0].id).toBe(site.id);
+    expect(body.sites[0].strokeCount).toBe(1);
     expect(body.sites[0].distanceM).toBeGreaterThan(0);
     expect(body.sites[0].distanceM).toBeLessThan(25);
     expect(body.sites[0]).not.toHaveProperty("worldMap");
@@ -109,6 +116,23 @@ describe("GET /v1/sites/nearby", () => {
       body: JSON.stringify(sampleSite({ latitude: 91 })),
     });
     expect(create.status).toBe(400);
+  });
+});
+
+describe("site feature prints", () => {
+  test("stores visual descriptors for candidate ranking", async () => {
+    const site = await insertSite(ORIGIN);
+    const data = Buffer.alloc(128, 42).toString("base64");
+    const id = crypto.randomUUID();
+    const posted = await api(`/v1/sites/${site.id}/feature-prints`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, data }),
+    });
+    expect(posted.status).toBe(200);
+    const listed = await api(`/v1/sites/${site.id}/feature-prints`);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({ featurePrints: [{ id, data }] });
   });
 });
 
@@ -257,7 +281,7 @@ async function insertSite(point: { lat: number; lon: number }) {
 
 async function insertMappedSite(point: { lat: number; lon: number }) {
   const site = await insertSite(point);
-  const res = await putWorldMap(site.id, arbitraryBytes());
+  const res = await putWorldMap(site.id, new Uint8Array(2048));
   expect(res.status).toBe(204);
   return site;
 }

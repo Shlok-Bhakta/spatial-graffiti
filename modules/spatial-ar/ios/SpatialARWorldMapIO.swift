@@ -57,7 +57,7 @@ enum SpatialARWorldMapIO {
       throw SpatialARError.exportFailed("Could not archive world map: \(error.localizedDescription)")
     }
 
-    let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+    let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
       ?? FileManager.default.temporaryDirectory
     let site = siteId ?? "site"
     let filename = "spatial-graffiti-\(site)-\(UUID().uuidString).worldmap"

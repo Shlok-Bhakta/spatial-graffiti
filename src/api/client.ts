@@ -65,7 +65,7 @@ export async function uploadWorldMap(siteId: string, fileUri: string): Promise<v
 }
 
 export async function downloadWorldMap(siteId: string): Promise<string> {
-  const dest = new File(Paths.cache, `${siteId}.worldmap`);
+  const dest = new File(Paths.document, `${siteId}.worldmap`);
   const downloaded = await File.downloadFileAsync(
     apiUrl(`/v1/sites/${siteId}/world-map`),
     dest,
@@ -96,4 +96,21 @@ export async function createStroke(siteId: string, stroke: Stroke): Promise<void
     const body = await response.text();
     throw new Error(`create stroke failed ${response.status}: ${body.slice(0, 400)}`);
   }
+}
+
+export type FeaturePrint = { id: string; data: string };
+
+export async function getFeaturePrints(siteId: string): Promise<FeaturePrint[]> {
+  const response = await fetch(apiUrl(`/v1/sites/${siteId}/feature-prints`));
+  const payload = await readJson<{ featurePrints: FeaturePrint[] }>(response, 'feature prints');
+  return payload.featurePrints;
+}
+
+export async function createFeaturePrint(siteId: string, featurePrint: FeaturePrint): Promise<void> {
+  const response = await fetch(apiUrl(`/v1/sites/${siteId}/feature-prints`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(featurePrint),
+  });
+  await readJson<{ ok: boolean }>(response, 'save feature print');
 }
