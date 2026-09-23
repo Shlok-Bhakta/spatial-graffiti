@@ -14,6 +14,7 @@ final class SpatialARController: NSObject, ARSessionDelegate {
   private var restoringWorldMap = false
   private var loadedWorldMap = false
   private var creatingRoot = false
+  private var drawingEnabled = false
 
   private var rootAnchor: ARAnchor?
   private var rootEntity: Entity?
@@ -72,6 +73,19 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     emitIfChanged()
   }
 
+  func startDiscovery(cameraGranted: Bool) throws {
+    beginFreshSession()
+    if !cameraGranted {
+      fail("Camera access is required for room discovery")
+      throw SpatialARError.cameraDenied
+    }
+    guard ARWorldTrackingConfiguration.isSupported else {
+      throw SpatialARError.unsupported
+    }
+    runWorldTracking(worldMap: nil)
+    emitIfChanged()
+  }
+
   func loadSite(siteId: String, worldMap: ARWorldMap, cameraGranted: Bool) throws {
     beginFreshSession()
     status.siteId = siteId
@@ -94,6 +108,19 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     beginFreshSession()
     status.mode = SpatialARMode.starting.rawValue
     emitIfChanged()
+  }
+
+  func setDrawingEnabled(_ enabled: Bool) {
+    drawingEnabled = enabled && status.mode == SpatialARMode.ready.rawValue
+    status.drawingEnabled = drawingEnabled
+    emitIfChanged()
+  }
+
+  func captureFeaturePrint() throws -> String {
+    guard let frame = Isolation.onMain({ self.session.currentFrame }) else {
+      throw SpatialARError.featurePrintFailed("The camera has not produced a frame yet")
+    }
+    return try SpatialARVision.capture(frame: frame)
   }
 
   func fail(_ message: String) {
@@ -243,6 +270,7 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     restoringWorldMap = false
     loadedWorldMap = false
     creatingRoot = false
+    drawingEnabled = false
     rootAnchor = nil
     rootEntity?.removeFromParent()
     rootEntity = nil
@@ -275,6 +303,7 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     status.mode = SpatialARMode.starting.rawValue
     status.siteId = nil
     status.rootAnchorReady = false
+    status.drawingEnabled = false
     lastEmittedStatus = nil
   }
 
@@ -298,7 +327,7 @@ final class SpatialARController: NSObject, ARSessionDelegate {
   }
 
   private var canDraw: Bool {
-    status.mode == SpatialARMode.ready.rawValue && status.rootAnchorReady && rootAnchor != nil
+    status.mode == SpatialARMode.ready.rawValue && status.rootAnchorReady && rootAnchor != nil && drawingEnabled
   }
 
   private func rootAnchorName() -> String? {
@@ -401,26 +430,23 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     }
     let camera = cameraTransform.translation
 
-    if let hit = nearestSurfaceHit(in: arView, at: point, camera: camera) {
-      let worldPoint = hit.worldTransform.translation
-      var normal = SIMD3<Float>(
-        hit.worldTransform.columns.1.x,
-        hit.worldTransform.columns.1.y,
-        hit.worldTransform.columns.1.z
-      )
-      normal = RayPlane.facingCamera(normal: normal, from: worldPoint, camera: camera)
-      let offset = worldPoint + normal * SpatialARMetrics.zFightOffset
-      return FrozenPlane(
-        point: root.inverse.transformPoint(offset),
-        normal: root.inverse.transformDirection(normal)
-      )
+    // Only draw anchored to real detected geometry (plane or LiDAR mesh).
+    // There is intentionally no air-draw fallback: projecting onto an
+    // arbitrary plane at a fixed distance is what let strokes pass through
+    // walls. If nothing was hit, refuse the stroke.
+    guard let hit = nearestSurfaceHit(in: arView, at: point, camera: camera) else {
+      return nil
     }
-
-    let forward = cameraTransform.cameraForward
-    let center = camera + forward * SpatialARMetrics.airDistance
-    let normal = RayPlane.facingCamera(normal: -forward, from: center, camera: camera)
+    let worldPoint = hit.worldTransform.translation
+    var normal = SIMD3<Float>(
+      hit.worldTransform.columns.1.x,
+      hit.worldTransform.columns.1.y,
+      hit.worldTransform.columns.1.z
+    )
+    normal = RayPlane.facingCamera(normal: normal, from: worldPoint, camera: camera)
+    let offset = worldPoint + normal * SpatialARMetrics.zFightOffset
     return FrozenPlane(
-      point: root.inverse.transformPoint(center),
+      point: root.inverse.transformPoint(offset),
       normal: root.inverse.transformDirection(normal)
     )
   }
@@ -481,6 +507,13 @@ final class SpatialARController: NSObject, ARSessionDelegate {
     if let last = stroke.points.last, simd_distance(last, next) < SpatialARMetrics.minPointSpacing {
       return
     }
+    // Per-tick occlusion gate: the frozen plane is infinite, so dragging past
+    // a wall edge (or a person walking between camera and stroke) would
+    // otherwise keep emitting points on the far side. Re-raycast against
+    // detected geometry/mesh and drop points hidden behind real surfaces.
+    if isOccluded(screenPoint: point, planePoint: next) {
+      return
+    }
     let previous = stroke.points.last
     stroke.points.append(next)
     activeStroke = stroke
@@ -493,6 +526,31 @@ final class SpatialARController: NSObject, ARSessionDelegate {
         color: stroke.color
       )
     }
+  }
+
+  /// Returns true when real-world geometry sits between the camera and the
+  /// candidate stroke point. Fails open (returns false) when tracking state
+  /// is unavailable so drawing never hard-locks during relocalization.
+  private func isOccluded(screenPoint: CGPoint, planePoint: SIMD3<Float>) -> Bool {
+    guard let arView = host?.arView,
+      let cameraTransform = session.currentFrame?.camera.transform,
+      let root = currentRootTransform()
+    else {
+      return false
+    }
+    let camera = cameraTransform.translation
+    let worldPoint = root.transformPoint(planePoint)
+    let planeDistance = simd_length(worldPoint - camera)
+    guard planeDistance.isFinite,
+      let hit = nearestSurfaceHit(in: arView, at: screenPoint, camera: camera)
+    else {
+      return false
+    }
+    let meshDistance = simd_length(hit.worldTransform.translation - camera)
+    guard meshDistance.isFinite else {
+      return false
+    }
+    return meshDistance + SpatialARMetrics.occlusionEpsilon < planeDistance
   }
 
   private func cancelActiveStroke(keep: Bool) {

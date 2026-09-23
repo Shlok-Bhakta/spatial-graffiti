@@ -11,9 +11,13 @@ export type SpatialARNativeProps = ViewProps & {
 };
 
 type SpatialARModule = {
+  startDiscovery(): Promise<void>;
   startNewSite(siteId: string): Promise<void>;
   loadSite(siteId: string, worldMapFileUri: string): Promise<void>;
   exportWorldMap(): Promise<string>;
+  captureFeaturePrint(): Promise<string>;
+  compareFeaturePrints(first: string, second: string): Promise<number>;
+  setDrawingEnabled(enabled: boolean): Promise<void>;
   setRemoteStrokes(strokes: Stroke[]): Promise<void>;
   getDebugState(): Promise<DebugState>;
   resetSession(): Promise<void>;

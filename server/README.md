@@ -17,6 +17,8 @@ bun run build
 
 `PORT` defaults to 3000. `DB_PATH` defaults to `./data/graffiti.sqlite`. The process binds `0.0.0.0` and creates the database directory when the filesystem allows it.
 
+The server also stores up to eight Vision feature prints per site at `GET` and `POST /v1/sites/:id/feature-prints`. Existing SQLite files gain this table on startup. Nearby discovery excludes world map blobs smaller than 1 KiB, which cannot be useful ARKit maps.
+
 ## Docker
 
 Create `./data` on the host first. The image will not mkdir `/data` on a locked root.

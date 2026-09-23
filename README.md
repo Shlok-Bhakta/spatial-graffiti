@@ -113,24 +113,24 @@ The simulator can check UI and API code. It cannot prove AR.
 
 1. Draw a line. Walk. The line stays in the room, not on the screen.
 2. Stand within 1 m of a wall and draw. The stroke sits on the wall.
-3. Point at open space and draw. The stroke sits on a plane about 1.5 m out.
-4. Start an air stroke, then move the phone while drawing. The existing line does not warp with the camera.
-5. Publish a site (wait until mapping is `mapped` or `extending` for several seconds). Kill the app. Reopen it in the same place. After relocalization the drawing returns.
+3. Point at open space and draw. No stroke should start without a detected surface.
+4. Drag a stroke across a wall edge. The line should stop where real geometry blocks it.
+5. Wait until the phone saves a local map, then draw a line and kill the app. Reopen it in the same place. After relocalization the drawing returns. Wait until mapping is `mapped` to confirm server upload.
 6. A second iPhone on the same backend should find the site and see the same line.
 
-If the app dies before the world map is uploaded, that unsynced site is gone. There is no phone-side database.
+The app keeps room maps and an append-only stroke journal in the phone's Documents directory. It retries uploads after relaunch. See [room recovery and its physical test](docs/LOCALIZATION.md).
 
 ## CI
 
 Copied from [MB-QR-Code-Scanner](https://github.com/Marginally-Better-Apps/MB-QR-Code-Scanner): npm + Expo prebuild + unsigned `xcodebuild` + Autoloader preview.
 
-PRs publish `pr-<n>` with `Spatial-Graffiti-unsigned.ipa` and a GitHub Pages trampoline. See [docs/AUTOLOADER_DEV_CYCLE.md](docs/AUTOLOADER_DEV_CYCLE.md).
+PRs publish `pr-<n>` with `Spatial-Graffiti-unsigned.ipa` and comment the shared Autoloader shim. See [docs/AUTOLOADER_DEV_CYCLE.md](docs/AUTOLOADER_DEV_CYCLE.md).
 
 On `main`, only `fix:`, `feat:`, and `feat!:` titles build a tagless release artifact.
 
 ## Known limits
 
 - No live multi-user stroke sync. A 10 second poll loads strokes already on the server.
-- Relocalization can fail. The app tries the nearest 3 sites, then starts a new one.
-- GPS accuracy can put you in the wrong site if two mapped rooms are close.
+- Relocalization can still fail when the room has changed or lacks visual features. The app offers room choices and does not silently replace the room.
+- Older rooms have no Vision feature prints until someone visits them with a new build. Room choice falls back to the last used room and distance.
 - AR persistence has to be tested on a phone. The agent cannot claim it passed from a simulator.

@@ -19,6 +19,15 @@ export type Site = {
 
 export type NearbySite = Site & {
   distanceM: number;
+  strokeCount?: number;
+  updatedAt?: string;
+  hasSnapshot?: boolean;
+};
+
+export type WorldMapVersion = {
+  sha256: string;
+  byteCount: number;
+  createdAt: string;
 };
 
 export type ARTracking = 'notAvailable' | 'limited' | 'normal';
@@ -32,6 +41,7 @@ export type ARStatus = {
   mode: ARMode;
   siteId?: string;
   rootAnchorReady: boolean;
+  drawingEnabled: boolean;
 };
 
 export type DebugState = ARStatus & {
@@ -44,6 +54,8 @@ export type AppPhase =
   | 'locating'
   | 'discovering'
   | 'relocalizing'
+  | 'choosing'
+  | 'mapping'
   | 'ready'
   | 'creating'
   | 'failed';

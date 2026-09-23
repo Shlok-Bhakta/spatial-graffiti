@@ -4,13 +4,15 @@ import simd
 
 enum SpatialARMetrics {
   static let surfaceMaxDistance: Float = 1.0
-  static let airDistance: Float = 1.5
   static let zFightOffset: Float = 0.005
   static let minPointSpacing: Float = 0.008
   static let maxPoints = 2048
   static let strokeWidth: Float = 0.01
   static let renderWidthMin: Float = 0.008
   static let renderWidthMax: Float = 0.012
+  /// Minimum depth gap before a stroke point counts as behind real geometry.
+  /// Guards against LiDAR mesh flicker at grazing angles.
+  static let occlusionEpsilon: Float = 0.02
 }
 
 enum SpatialARMode: String {
@@ -28,6 +30,7 @@ struct SpatialARStatus: Equatable {
   var mode = SpatialARMode.starting.rawValue
   var siteId: String?
   var rootAnchorReady = false
+  var drawingEnabled = false
 
   func dictionary() -> [String: Any] {
     var payload: [String: Any] = [
@@ -35,6 +38,7 @@ struct SpatialARStatus: Equatable {
       "mapping": mapping,
       "mode": mode,
       "rootAnchorReady": rootAnchorReady,
+      "drawingEnabled": drawingEnabled,
     ]
     if let trackingReason {
       payload["trackingReason"] = trackingReason
@@ -86,6 +90,7 @@ enum SpatialARError: LocalizedError {
   case noRootAnchor
   case worldMapInvalid(String)
   case exportFailed(String)
+  case featurePrintFailed(String)
 
   var errorDescription: String? {
     switch self {
@@ -98,6 +103,8 @@ enum SpatialARError: LocalizedError {
     case .worldMapInvalid(let message):
       return message
     case .exportFailed(let message):
+      return message
+    case .featurePrintFailed(let message):
       return message
     }
   }

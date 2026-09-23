@@ -21,6 +21,27 @@ public class SpatialARModule: Module {
       }
     }
 
+    AsyncFunction("startDiscovery") {
+      let granted = await Isolation.requestCamera()
+      try Isolation.onMain {
+        try SpatialARController.shared.startDiscovery(cameraGranted: granted)
+      }
+    }
+
+    AsyncFunction("captureFeaturePrint") { () -> String in
+      try SpatialARController.shared.captureFeaturePrint()
+    }
+
+    AsyncFunction("compareFeaturePrints") { (first: String, second: String) -> Double in
+      try SpatialARVision.distance(first: first, second: second)
+    }
+
+    AsyncFunction("setDrawingEnabled") { (enabled: Bool) in
+      Isolation.onMain {
+        SpatialARController.shared.setDrawingEnabled(enabled)
+      }
+    }
+
     AsyncFunction("loadSite") { (siteId: String, worldMapFileUri: String) in
       let granted = await Isolation.requestCamera()
       let worldMap: ARWorldMap

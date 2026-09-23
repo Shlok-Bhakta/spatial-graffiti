@@ -1,4 +1,4 @@
-import { apiUrl } from './client';
+import { apiHostLabel, apiUrl } from './client';
 
 describe('apiUrl', () => {
   const previous = process.env.EXPO_PUBLIC_API_BASE_URL;
@@ -18,5 +18,17 @@ describe('apiUrl', () => {
   it('throws when the base URL is missing', () => {
     process.env.EXPO_PUBLIC_API_BASE_URL = '';
     expect(() => apiUrl('/health')).toThrow(/EXPO_PUBLIC_API_BASE_URL/);
+  });
+});
+
+describe('apiHostLabel', () => {
+  it('strips the scheme so the HUD can show the Tailscale host', () => {
+    expect(apiHostLabel('http://kiwi.taildb44.ts.net:38420')).toBe(
+      'kiwi.taildb44.ts.net:38420',
+    );
+  });
+
+  it('says unset when the base URL is empty', () => {
+    expect(apiHostLabel('')).toBe('API unset');
   });
 });

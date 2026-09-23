@@ -5,6 +5,7 @@ import { boundingBox, haversineM } from "./geo";
 
 const MAX_JSON_BYTES = 1 * 1024 * 1024;
 const MAX_WORLD_MAP_BYTES = 32 * 1024 * 1024;
+const MAX_SNAPSHOT_BYTES = 512 * 1024;
 const MAX_NEARBY = 10;
 const MAX_STROKE_POINTS = 2048;
 const MIN_WIDTH_M = 0.001;
@@ -12,6 +13,7 @@ const MAX_WIDTH_M = 0.1;
 const DEFAULT_RADIUS_M = 100;
 const MAX_RADIUS_M = 500;
 const COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const MAX_FEATURE_PRINT_BYTES = 64 * 1024;
 
 class HttpError extends Error {
   constructor(
@@ -24,15 +26,23 @@ class HttpError extends Error {
 
 export function createApp(db: AppDb) {
   return async (req: Request): Promise<Response> => {
+    const started = Date.now();
+    const path = new URL(req.url).pathname;
+    let response: Response;
     try {
-      return await route(req, db);
+      response = await route(req, db);
     } catch (err) {
       if (err instanceof HttpError) {
-        return json(err.status, { error: err.message });
+        response = json(err.status, { error: err.message });
+      } else {
+        console.error(err);
+        response = json(500, { error: "internal error" });
       }
-      console.error(err);
-      return json(500, { error: "internal error" });
     }
+    if (!(req.method === "GET" && normalizePath(path) === "/health")) {
+      console.log(`${req.method} ${normalizePath(path)} ${response.status} ${Date.now() - started}ms`);
+    }
+    return response;
   };
 }
 
@@ -63,6 +73,26 @@ async function route(req: Request, db: AppDb): Promise<Response> {
     }
   }
 
+  const historyListId = matchSegment(path, "/v1/sites/", "/world-map/history");
+  if (historyListId && method === "GET") {
+    return listWorldMapHistory(db, historyListId);
+  }
+
+  const historyBlob = matchHistoryBlob(path);
+  if (historyBlob && method === "GET") {
+    return getHistoryWorldMap(db, historyBlob.siteId, historyBlob.sha256);
+  }
+
+  const snapshotId = matchSegment(path, "/v1/sites/", "/snapshot");
+  if (snapshotId) {
+    if (method === "PUT") {
+      return putSnapshot(req, db, snapshotId);
+    }
+    if (method === "GET") {
+      return getSnapshot(db, snapshotId);
+    }
+  }
+
   const strokesId = matchSegment(path, "/v1/sites/", "/strokes");
   if (strokesId) {
     if (method === "GET") {
@@ -70,6 +100,33 @@ async function route(req: Request, db: AppDb): Promise<Response> {
     }
     if (method === "POST") {
       return createStroke(req, db, strokesId);
+    }
+  }
+
+  const featurePrintSiteId = matchSegment(path, "/v1/sites/", "/feature-prints");
+  if (featurePrintSiteId) {
+    if (method === "GET") {
+      if (!db.findSite(featurePrintSiteId)) throw new HttpError(404, "site not found");
+      return json(200, {
+        featurePrints: db.listFeaturePrints(featurePrintSiteId).map((row) => ({
+          id: row.id,
+          data: Buffer.from(row.data).toString("base64"),
+        })),
+      });
+    }
+    if (method === "POST") {
+      if (!db.findSite(featurePrintSiteId)) throw new HttpError(404, "site not found");
+      const body = await readJson(req);
+      if (!isRecord(body) || typeof body.id !== "string" || body.id.length > 100 || body.id.length === 0 ||
+          typeof body.data !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.data)) {
+        throw new HttpError(400, "invalid feature print");
+      }
+      const bytes = Buffer.from(body.data, "base64");
+      if (bytes.length < 64 || bytes.length > MAX_FEATURE_PRINT_BYTES || bytes.toString("base64") !== body.data) {
+        throw new HttpError(400, "invalid feature print");
+      }
+      db.insertFeaturePrint(featurePrintSiteId, body.id, bytes, new Date().toISOString());
+      return json(200, { ok: true });
     }
   }
 
@@ -144,6 +201,54 @@ function getWorldMap(db: AppDb, siteId: string): Response {
   return new Response(bytes, {
     status: 200,
     headers: { "Content-Type": "application/octet-stream" },
+  });
+}
+
+function listWorldMapHistory(db: AppDb, siteId: string): Response {
+  if (!db.findSite(siteId)) {
+    throw new HttpError(404, "site not found");
+  }
+  return json(200, { history: db.listHistory(siteId) });
+}
+
+function getHistoryWorldMap(db: AppDb, siteId: string, sha256: string): Response {
+  if (!db.findSite(siteId)) {
+    throw new HttpError(404, "site not found");
+  }
+  const bytes = db.getHistoryMap(siteId, sha256);
+  if (!bytes) {
+    throw new HttpError(404, "world map version not found");
+  }
+  return new Response(bytes, {
+    status: 200,
+    headers: { "Content-Type": "application/octet-stream" },
+  });
+}
+
+async function putSnapshot(req: Request, db: AppDb, siteId: string): Promise<Response> {
+  if (!db.findSite(siteId)) {
+    throw new HttpError(404, "site not found");
+  }
+  rejectIfTooLarge(req, MAX_SNAPSHOT_BYTES, "snapshot too large");
+  const bytes = new Uint8Array(await req.arrayBuffer());
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_SNAPSHOT_BYTES) {
+    throw new HttpError(413, "snapshot too large");
+  }
+  if (!isJpeg(bytes)) {
+    throw new HttpError(400, "snapshot must be a JPEG");
+  }
+  db.setSnapshot(siteId, bytes, new Date().toISOString());
+  return new Response(null, { status: 204 });
+}
+
+function getSnapshot(db: AppDb, siteId: string): Response {
+  const bytes = db.getSnapshot(siteId);
+  if (!bytes) {
+    throw new HttpError(404, "snapshot not found");
+  }
+  return new Response(bytes, {
+    status: 200,
+    headers: { "Content-Type": "image/jpeg" },
   });
 }
 
@@ -299,8 +404,11 @@ function toNearbySite(row: NearbyRow, lat: number, lon: number) {
     latitude: row.latitude,
     longitude: row.longitude,
     horizontalAccuracyM: row.horizontal_accuracy_m,
+    strokeCount: row.stroke_count,
     distanceM: haversineM(lat, lon, row.latitude, row.longitude),
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    hasSnapshot: row.has_snapshot === 1,
   };
 }
 
@@ -342,6 +450,35 @@ function matchSegment(path: string, prefix: string, suffix: string): string | nu
   } catch {
     return null;
   }
+}
+
+function matchHistoryBlob(path: string): { siteId: string; sha256: string } | null {
+  const prefix = "/v1/sites/";
+  const marker = "/world-map/history/";
+  if (!path.startsWith(prefix)) {
+    return null;
+  }
+  const markerIndex = path.indexOf(marker);
+  if (markerIndex < 0) {
+    return null;
+  }
+  const siteId = path.slice(prefix.length, markerIndex);
+  const sha256 = path.slice(markerIndex + marker.length);
+  if (!siteId || siteId.includes("/") || !sha256 || sha256.includes("/")) {
+    return null;
+  }
+  if (!/^[0-9a-f]{64}$/i.test(sha256)) {
+    throw new HttpError(400, "invalid sha256");
+  }
+  try {
+    return { siteId: decodeURIComponent(siteId), sha256: sha256.toLowerCase() };
+  } catch {
+    return null;
+  }
+}
+
+function isJpeg(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
 }
 
 function parseQueryNumber(raw: string | null): number | null {
