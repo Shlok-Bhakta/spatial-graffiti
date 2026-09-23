@@ -229,19 +229,10 @@ export function useSiteSession(): SiteSession {
       if (!journal.state.sites[candidate.id]) journal.rememberSite(candidate, published);
       else if (published && !journal.state.sites[candidate.id].published) journal.markPublished(candidate.id);
       journal.setActive(candidate.id);
-      let remote: Stroke[] = [];
-      if (published) {
-        try { remote = await getStrokes(candidate.id); }
-        catch (err) {
-          console.error('stroke download failed', err);
-          setError('Room found. Showing marks saved on this phone while the server is unavailable.');
-        }
-      }
-      const merged = new Map(remote.map((stroke) => [stroke.id, stroke]));
-      for (const stroke of journal.allStrokes(candidate.id)) merged.set(stroke.id, stroke);
-      await getSpatialAR().setRemoteStrokes([...merged.values()]);
+      const local = journal.allStrokes(candidate.id);
+      await getSpatialAR().setRemoteStrokes(local);
       await getSpatialAR().setDrawingEnabled(true);
-      setStrokeCount(merged.size);
+      setStrokeCount(local.length);
       setPendingCount(journal.pendingStrokes(candidate.id).length);
       setSavedOnServer(published);
       setPhase('ready');
@@ -250,6 +241,16 @@ export function useSiteSession(): SiteSession {
       if (published) {
         void flushStrokes(candidate.id);
         void flushPrints(candidate.id);
+        void getStrokes(candidate.id).then(async (remote) => {
+          if (siteIdRef.current !== candidate.id) return;
+          const merged = new Map(remote.map((stroke) => [stroke.id, stroke]));
+          for (const stroke of journal.allStrokes(candidate.id)) merged.set(stroke.id, stroke);
+          await getSpatialAR().setRemoteStrokes([...merged.values()]);
+          setStrokeCount(merged.size);
+        }).catch((err) => {
+          console.error('stroke download failed', err);
+          setError('Room found. Showing marks saved on this phone while the server is unavailable.');
+        });
       } else void publishSite();
       void capturePrint(candidate.id);
     } catch (err) {
@@ -271,42 +272,49 @@ export function useSiteSession(): SiteSession {
     setSavedOnServer(false);
     const ar = getSpatialAR();
     const localUri = journalRef.current?.state.sites[candidate.id]?.mapUri;
-    const mapUris: string[] = [];
-    if (localUri) mapUris.push(localUri);
-    if (remoteIdsRef.current.has(candidate.id)) {
-      try { mapUris.push(await downloadWorldMap(candidate.id)); }
-      catch (err) { console.error('latest room map download failed', candidate.id, err); }
+    let triedMap = false;
+    const tryMap = async (uri: string, timeoutMs: number): Promise<boolean> => {
+      if (attemptRef.current !== attempt) return false;
+      triedMap = true;
+      try {
+        await ar.loadSite(candidate.id, uri);
+        if (attemptRef.current !== attempt) return false;
+        const ready = await waitForStatus(
+          (next) => next.mode === 'ready' && next.rootAnchorReady && next.tracking === 'normal' && next.siteId === candidate.id,
+          timeoutMs, attempt,
+        );
+        if (attemptRef.current !== attempt || !ready) return false;
+        // Keep a local copy so this room can reopen even while Kiwi is offline.
+        if (journalRef.current?.state.sites[candidate.id]) journalRef.current.rememberMap(candidate.id, uri);
+        await completeCandidate(candidate);
+        return completedSiteRef.current === candidate.id;
+      } catch (err) {
+        console.error('room map failed', candidate.id, err);
+        return false;
+      }
+    };
+    if (localUri && await tryMap(localUri, RELOCALIZE_MS)) return;
+    if (attemptRef.current !== attempt) return;
+    if (remoteIdsRef.current.has(candidate.id) || journalRef.current?.state.sites[candidate.id]?.published) {
+      try {
+        const latest = await downloadWorldMap(candidate.id);
+        if (await tryMap(latest, localUri ? 20_000 : RELOCALIZE_MS)) return;
+      } catch (err) { console.error('latest room map download failed', candidate.id, err); }
+      if (attemptRef.current !== attempt) return;
       try {
         const history = await getWorldMapHistory(candidate.id);
         for (const version of history.slice(0, 2)) {
-          try { mapUris.push(await downloadWorldMapVersion(candidate.id, version.sha256)); }
-          catch (err) { console.error('older room map download failed', candidate.id, err); }
+          if (attemptRef.current !== attempt) return;
+          try {
+            const older = await downloadWorldMapVersion(candidate.id, version.sha256);
+            if (await tryMap(older, 20_000)) return;
+          } catch (err) { console.error('older room map download failed', candidate.id, err); }
         }
       } catch (err) { console.error('room map history unavailable', candidate.id, err); }
     }
     if (attemptRef.current !== attempt) return;
-    for (const [index, uri] of mapUris.entries()) {
-      try {
-        await ar.loadSite(candidate.id, uri);
-        if (attemptRef.current !== attempt) return;
-        const ready = await waitForStatus(
-          (next) => next.mode === 'ready' && next.rootAnchorReady && next.tracking === 'normal' && next.siteId === candidate.id,
-          index === 0 ? RELOCALIZE_MS : 20_000, attempt,
-        );
-        if (attemptRef.current !== attempt) return;
-        if (!ready) continue;
-        // Keep a local copy so this room can reopen even while Kiwi is offline.
-        if (journalRef.current?.state.sites[candidate.id]) journalRef.current.rememberMap(candidate.id, uri);
-        await completeCandidate(candidate);
-        return;
-      } catch (err) {
-        if (attemptRef.current !== attempt) return;
-        console.error('room map failed', candidate.id, err);
-      }
-    }
-    if (attemptRef.current !== attempt) return;
     setPhase('choosing');
-    setError(mapUris.length
+    setError(triedMap
       ? 'Still looking for this room. Aim at the same walls and furniture, or choose another room.'
       : 'Could not download this room. Choose a room saved on this phone, or try again online.');
   }, [completeCandidate, waitForStatus]);
@@ -337,7 +345,7 @@ export function useSiteSession(): SiteSession {
         let nearby: NearbySite[] = [];
         let discoveryFailed = !location;
         if (location) {
-          try { nearby = await getNearbySites(location.latitude, location.longitude, 100); }
+          try { nearby = await getNearbySites(location.latitude, location.longitude, 200); }
           catch (err) {
             discoveryFailed = true;
             console.error('nearby request failed', err);
@@ -421,13 +429,10 @@ export function useSiteSession(): SiteSession {
     setStatus(next);
     if (next.mapping === 'extending' && extendingSinceRef.current == null) extendingSinceRef.current = Date.now();
     if (next.mapping === 'limited' || next.mapping === 'notAvailable') extendingSinceRef.current = null;
-    const selected = selectedRef.current;
-    if (selected && selected.id === next.siteId && next.mode === 'ready' && next.tracking === 'normal') {
-      void completeCandidate(selected);
-    } else if (next.mode === 'ready' && next.rootAnchorReady && !next.drawingEnabled) {
+    if (!selectedRef.current && next.mode === 'ready' && next.rootAnchorReady && !next.drawingEnabled) {
       void checkpointMap();
     }
-  }, [checkpointMap, completeCandidate]);
+  }, [checkpointMap]);
 
   const onStrokeCompleted = useCallback((stroke: Stroke) => {
     const journal = journalRef.current;

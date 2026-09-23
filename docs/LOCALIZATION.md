@@ -1,6 +1,6 @@
 # How room recovery works
 
-GPS finds rooms within 100 m. It cannot tell adjacent rooms apart. The app now ranks nearby rooms with camera feature prints, then lets ARKit align against the selected room's saved `ARWorldMap`. If alignment stalls, the person holding the phone can choose a different room. The app does not create a new room merely because a 35 second alignment attempt timed out.
+GPS finds rooms within 200 m. It cannot tell adjacent rooms apart. The app now ranks nearby rooms with camera feature prints, then lets ARKit align against the selected room's saved `ARWorldMap`. If alignment stalls, the person holding the phone can choose a different room. The app does not create a new room merely because a 35 second alignment attempt timed out.
 
 This follows the coarse retrieval, precise localization pattern in [Sarlin et al., CVPR 2019](https://openaccess.thecvf.com/content_CVPR_2019/papers/Sarlin_From_Coarse_to_Fine_Robust_Hierarchical_Localization_at_Large_Scale_CVPR_2019_paper.pdf). We use Apple's Vision feature prints for retrieval instead of the paper's learned image descriptors. ARKit handles final alignment instead of the paper's feature matching and pose solver. Vision feature prints are observations with a supported distance operation, as described in [Apple's Vision documentation](https://developer.apple.com/documentation/vision/vnfeatureprintobservation). The server stores feature prints, not camera photos.
 
