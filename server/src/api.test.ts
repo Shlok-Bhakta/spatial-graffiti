@@ -162,6 +162,91 @@ describe("world map", () => {
     expect(meta?.world_map_bytes).toBe(bytes.byteLength);
     expect(meta?.world_map_sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
   });
+
+  test("previous map kept in history on overwrite", async () => {
+    const site = await insertSite(ORIGIN);
+    const first = arbitraryBytes();
+    const second = Uint8Array.from([0x01, 0x02, 0x03, 0x04]);
+    await putWorldMap(site.id, first);
+    await putWorldMap(site.id, second);
+    const firstSha = createHash("sha256").update(first).digest("hex");
+
+    const list = await api(`/v1/sites/${site.id}/world-map/history`);
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as {
+      history: Array<{ sha256: string; byte_count: number; createdAt: string }>;
+    };
+    expect(body.history).toHaveLength(1);
+    expect(body.history[0].sha256).toBe(firstSha);
+    expect(body.history[0].byte_count).toBe(first.byteLength);
+
+    const blob = await api(`/v1/sites/${site.id}/world-map/history/${firstSha}`);
+    expect(blob.status).toBe(200);
+    expect([...new Uint8Array(await blob.arrayBuffer())]).toEqual([...first]);
+
+    const missing = await api(
+      `/v1/sites/${site.id}/world-map/history/${"0".repeat(64)}`,
+    );
+    expect(missing.status).toBe(404);
+  });
+
+  test("same map re-upload does not duplicate history", async () => {
+    const site = await insertSite(ORIGIN);
+    const bytes = arbitraryBytes();
+    await putWorldMap(site.id, bytes);
+    await putWorldMap(site.id, bytes);
+    const list = await api(`/v1/sites/${site.id}/world-map/history`);
+    expect(((await list.json()) as { history: unknown[] }).history).toEqual([]);
+  });
+});
+
+describe("snapshots", () => {
+  test("upload and download snapshot roundtrip", async () => {
+    const site = await insertSite(ORIGIN);
+    const jpeg = sampleJpeg();
+    const put = await api(`/v1/sites/${site.id}/snapshot`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/jpeg" },
+      body: jpeg,
+    });
+    expect(put.status).toBe(204);
+
+    const get = await api(`/v1/sites/${site.id}/snapshot`);
+    expect(get.status).toBe(200);
+    expect(get.headers.get("Content-Type")).toBe("image/jpeg");
+    expect([...new Uint8Array(await get.arrayBuffer())]).toEqual([...jpeg]);
+  });
+
+  test("non-JPEG snapshot rejected, missing snapshot 404s", async () => {
+    const site = await insertSite(ORIGIN);
+    const bad = await api(`/v1/sites/${site.id}/snapshot`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/jpeg" },
+      body: Uint8Array.from([0x00, 0x01, 0x02, 0x03]),
+    });
+    expect(bad.status).toBe(400);
+
+    const missing = await api(`/v1/sites/${site.id}/snapshot`);
+    expect(missing.status).toBe(404);
+  });
+
+  test("nearby reports snapshot presence and update time", async () => {
+    const plain = await insertMappedSite(shiftLat(ORIGIN, 10));
+    const withSnap = await insertMappedSite(shiftLat(ORIGIN, 15));
+    await api(`/v1/sites/${withSnap.id}/snapshot`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/jpeg" },
+      body: sampleJpeg(),
+    });
+    const res = await nearby(ORIGIN, 100);
+    expect(res.status).toBe(200);
+    const sites = (await readNearby(res)).sites;
+    const plainEntry = sites.find((site) => site.id === plain.id);
+    const snapEntry = sites.find((site) => site.id === withSnap.id);
+    expect(plainEntry).toMatchObject({ hasSnapshot: false });
+    expect(snapEntry).toMatchObject({ hasSnapshot: true });
+    expect(typeof snapEntry?.updatedAt).toBe("string");
+  });
 });
 
 describe("strokes", () => {
@@ -249,8 +334,11 @@ async function readNearby(res: Response) {
       latitude: number;
       longitude: number;
       horizontalAccuracyM: number | null;
+      strokeCount: number;
       distanceM: number;
       createdAt: string;
+      updatedAt: string;
+      hasSnapshot: boolean;
     }>;
   };
 }
@@ -354,4 +442,8 @@ function shiftLat(point: { lat: number; lon: number }, meters: number) {
 
 function arbitraryBytes(): Uint8Array {
   return Uint8Array.from([0x00, 0xff, 0x10, 0x80, 0x7f, 0x01, 0x00, 0xde, 0xad, 0xbe, 0xef]);
+}
+
+function sampleJpeg(): Uint8Array {
+  return Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x01, 0x02, 0xff, 0xd9]);
 }

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
-  createFeaturePrint, createSite, createStroke, downloadWorldMap, getFeaturePrints,
-  getNearbySites, getStrokes, uploadWorldMap,
+  createFeaturePrint, createSite, createStroke, downloadWorldMap, downloadWorldMapVersion,
+  getFeaturePrints, getNearbySites, getStrokes, getWorldMapHistory, uploadWorldMap,
 } from '@/api/client';
 import { getSpatialAR } from '@/ar/native';
+import { randomId } from '@/id';
 import { getUsefulLocation, requestForegroundLocation, type GpsFix } from '@/location';
 import type { AppPhase, ARStatus, NearbySite, Site, Stroke } from '@/types';
 
@@ -110,7 +111,7 @@ export function useSiteSession(): SiteSession {
     busyRef.current.print = true;
     lastPrintAtRef.current = Date.now();
     try {
-      journal.rememberFeaturePrint(crypto.randomUUID(), id, await getSpatialAR().captureFeaturePrint());
+      journal.rememberFeaturePrint(randomId(), id, await getSpatialAR().captureFeaturePrint());
       if (journal.state.sites[id]?.published) await flushPrints(id);
     } catch (err) {
       console.error('feature print capture failed', err);
@@ -126,7 +127,7 @@ export function useSiteSession(): SiteSession {
     if (!id || !journal || !current || busyRef.current.publish) return;
     const saved = journal.state.sites[id];
     if (!saved || saved.published || !saved.mapUri || current.mode !== 'ready' || current.siteId !== id) return;
-    if (!canPublishWorldMap(current.mapping, extendingSinceRef.current, Date.now())) return;
+    if (!canPublishWorldMap(current.mapping)) return;
     const latitude = saved.latitude || gpsRef.current?.latitude;
     const longitude = saved.longitude || gpsRef.current?.longitude;
     if (latitude == null || longitude == null) {
@@ -188,7 +189,7 @@ export function useSiteSession(): SiteSession {
     const attempt = ++attemptRef.current;
     selectedRef.current = null;
     completedSiteRef.current = null;
-    const id = crypto.randomUUID();
+    const id = randomId();
     const site: Site = {
       id, latitude: gpsRef.current?.latitude ?? 0, longitude: gpsRef.current?.longitude ?? 0,
       horizontalAccuracyM: gpsRef.current?.horizontalAccuracyM ?? null,
@@ -270,32 +271,44 @@ export function useSiteSession(): SiteSession {
     setSavedOnServer(false);
     const ar = getSpatialAR();
     const localUri = journalRef.current?.state.sites[candidate.id]?.mapUri;
-    try {
-      let uri = localUri || await downloadWorldMap(candidate.id);
-      try { await ar.loadSite(candidate.id, uri); }
-      catch (err) {
-        if (!localUri || !remoteIdsRef.current.has(candidate.id)) throw err;
-        uri = await downloadWorldMap(candidate.id);
-        await ar.loadSite(candidate.id, uri);
-      }
-      if (attemptRef.current !== attempt) return;
-      if (journalRef.current?.state.sites[candidate.id]) journalRef.current.rememberMap(candidate.id, uri);
-      const ready = await waitForStatus(
-        (next) => next.mode === 'ready' && next.rootAnchorReady && next.tracking === 'normal' && next.siteId === candidate.id,
-        RELOCALIZE_MS, attempt,
-      );
-      if (attemptRef.current !== attempt) return;
-      if (ready) await completeCandidate(candidate);
-      else {
-        setPhase('choosing');
-        setError('Still looking for this room. Aim at the same walls and furniture, or choose another room.');
-      }
-    } catch (err) {
-      if (attemptRef.current !== attempt) return;
-      console.error('room load failed', candidate.id, err);
-      setPhase('choosing');
-      setError('Could not load this room. Choose another room or start a new one.');
+    const mapUris: string[] = [];
+    if (localUri) mapUris.push(localUri);
+    if (remoteIdsRef.current.has(candidate.id)) {
+      try { mapUris.push(await downloadWorldMap(candidate.id)); }
+      catch (err) { console.error('latest room map download failed', candidate.id, err); }
+      try {
+        const history = await getWorldMapHistory(candidate.id);
+        for (const version of history.slice(0, 2)) {
+          try { mapUris.push(await downloadWorldMapVersion(candidate.id, version.sha256)); }
+          catch (err) { console.error('older room map download failed', candidate.id, err); }
+        }
+      } catch (err) { console.error('room map history unavailable', candidate.id, err); }
     }
+    if (attemptRef.current !== attempt) return;
+    for (const [index, uri] of mapUris.entries()) {
+      try {
+        await ar.loadSite(candidate.id, uri);
+        if (attemptRef.current !== attempt) return;
+        const ready = await waitForStatus(
+          (next) => next.mode === 'ready' && next.rootAnchorReady && next.tracking === 'normal' && next.siteId === candidate.id,
+          index === 0 ? RELOCALIZE_MS : 20_000, attempt,
+        );
+        if (attemptRef.current !== attempt) return;
+        if (!ready) continue;
+        // Keep a local copy so this room can reopen even while Kiwi is offline.
+        if (journalRef.current?.state.sites[candidate.id]) journalRef.current.rememberMap(candidate.id, uri);
+        await completeCandidate(candidate);
+        return;
+      } catch (err) {
+        if (attemptRef.current !== attempt) return;
+        console.error('room map failed', candidate.id, err);
+      }
+    }
+    if (attemptRef.current !== attempt) return;
+    setPhase('choosing');
+    setError(mapUris.length
+      ? 'Still looking for this room. Aim at the same walls and furniture, or choose another room.'
+      : 'Could not download this room. Choose a room saved on this phone, or try again online.');
   }, [completeCandidate, waitForStatus]);
 
   const chooseSite = useCallback((id: string) => {

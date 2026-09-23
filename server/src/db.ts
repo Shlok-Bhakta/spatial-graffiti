@@ -12,10 +12,25 @@ CREATE TABLE IF NOT EXISTS sites (
     world_map_sha256 TEXT,
     world_map_bytes INTEGER,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'worldmap',
+    heading_deg REAL,
+    altitude_m REAL,
+    ios_version TEXT,
+    anchor_count INTEGER,
+    thumbnail_jpeg BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_sites_latitude ON sites(latitude);
 CREATE INDEX IF NOT EXISTS idx_sites_longitude ON sites(longitude);
+CREATE TABLE IF NOT EXISTS world_map_history (
+    site_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    world_map BLOB NOT NULL,
+    byte_count INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (site_id, sha256),
+    FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS strokes (
     id TEXT PRIMARY KEY,
     site_id TEXT NOT NULL,
@@ -36,6 +51,19 @@ CREATE TABLE IF NOT EXISTS feature_prints (
 CREATE INDEX IF NOT EXISTS idx_feature_prints_site ON feature_prints(site_id);
 `;
 
+// Columns added after the initial schema. Applied idempotently so existing
+// Kiwi/prod databases migrate on boot without a manual step.
+const SITE_COLUMN_DEFS = [
+  "provider TEXT NOT NULL DEFAULT 'worldmap'",
+  "heading_deg REAL",
+  "altitude_m REAL",
+  "ios_version TEXT",
+  "anchor_count INTEGER",
+  "thumbnail_jpeg BLOB",
+] as const;
+
+const HISTORY_KEEP = 5;
+
 export type SiteRow = {
   id: string;
   latitude: number;
@@ -55,6 +83,14 @@ export type NearbyRow = {
   horizontal_accuracy_m: number | null;
   created_at: string;
   stroke_count: number;
+  updated_at: string;
+  has_snapshot: number;
+};
+
+export type WorldMapHistoryEntry = {
+  sha256: string;
+  byte_count: number;
+  created_at: string;
 };
 
 export type StrokeRow = {
@@ -104,6 +140,13 @@ export function openDb(path: string) {
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec(SCHEMA);
+  for (const columnDef of SITE_COLUMN_DEFS) {
+    try {
+      db.exec(`ALTER TABLE sites ADD COLUMN ${columnDef}`);
+    } catch {
+      // Column already exists on databases created before the migration.
+    }
+  }
 
   const getSiteStmt = db.query(
     `SELECT id, latitude, longitude, horizontal_accuracy_m, world_map,
@@ -116,6 +159,8 @@ export function openDb(path: string) {
   );
   const nearbyStmt = db.query(
     `SELECT sites.id, sites.latitude, sites.longitude, sites.horizontal_accuracy_m, sites.created_at,
+            sites.updated_at,
+            CASE WHEN sites.thumbnail_jpeg IS NULL THEN 0 ELSE 1 END AS has_snapshot,
             (SELECT COUNT(*) FROM strokes WHERE strokes.site_id = sites.id) AS stroke_count
      FROM sites
      WHERE sites.latitude BETWEEN ? AND ?
@@ -131,6 +176,33 @@ export function openDb(path: string) {
   const getWorldMapStmt = db.query(`SELECT world_map FROM sites WHERE id = ? AND world_map IS NOT NULL`);
   const getWorldMapMetaStmt = db.query(
     `SELECT world_map_sha256, world_map_bytes FROM sites WHERE id = ?`,
+  );
+  const insertHistoryStmt = db.query(
+    `INSERT OR IGNORE INTO world_map_history (site_id, sha256, world_map, byte_count, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const pruneHistoryStmt = db.query(
+    `DELETE FROM world_map_history
+     WHERE site_id = ?
+       AND sha256 NOT IN (
+         SELECT sha256 FROM world_map_history
+         WHERE site_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?
+       )`,
+  );
+  const listHistoryStmt = db.query(
+    `SELECT sha256, byte_count, created_at FROM world_map_history
+     WHERE site_id = ? ORDER BY created_at DESC`,
+  );
+  const getHistoryMapStmt = db.query(
+    `SELECT world_map FROM world_map_history WHERE site_id = ? AND sha256 = ?`,
+  );
+  const setSnapshotStmt = db.query(
+    `UPDATE sites SET thumbnail_jpeg = ?, updated_at = ? WHERE id = ?`,
+  );
+  const getSnapshotStmt = db.query(
+    `SELECT thumbnail_jpeg FROM sites WHERE id = ? AND thumbnail_jpeg IS NOT NULL`,
   );
   const listStrokesStmt = db.query(
     `SELECT id, site_id, color, width_m, points_json, created_at
@@ -189,6 +261,15 @@ export function openDb(path: string) {
       return nearbyStmt.all(minLat, maxLat, minLon, maxLon) as NearbyRow[];
     },
     setWorldMap(id: string, bytes: Uint8Array, sha256: string, byteCount: number, updatedAt: string) {
+      const previous = getWorldMapStmt.get(id) as { world_map: unknown } | null;
+      const prevBytes = previous ? asBytes(previous.world_map) : null;
+      const prevMeta = getWorldMapMetaStmt.get(id) as {
+        world_map_sha256: string | null;
+      } | null;
+      if (prevBytes && prevMeta?.world_map_sha256 && prevMeta.world_map_sha256 !== sha256) {
+        insertHistoryStmt.run(id, prevMeta.world_map_sha256, prevBytes, prevBytes.byteLength, updatedAt);
+        pruneHistoryStmt.run(id, id, HISTORY_KEEP);
+      }
       updateWorldMapStmt.run(bytes, sha256, byteCount, updatedAt, id);
     },
     getWorldMap(id: string): Uint8Array | null {
@@ -197,6 +278,20 @@ export function openDb(path: string) {
     },
     getWorldMapMeta(id: string): WorldMapMeta | null {
       return (getWorldMapMetaStmt.get(id) as WorldMapMeta | null) ?? null;
+    },
+    listHistory(siteId: string): WorldMapHistoryEntry[] {
+      return listHistoryStmt.all(siteId) as WorldMapHistoryEntry[];
+    },
+    getHistoryMap(siteId: string, sha256: string): Uint8Array | null {
+      const row = getHistoryMapStmt.get(siteId, sha256) as { world_map: unknown } | null;
+      return row ? asBytes(row.world_map) : null;
+    },
+    setSnapshot(id: string, jpeg: Uint8Array, updatedAt: string) {
+      setSnapshotStmt.run(jpeg, updatedAt, id);
+    },
+    getSnapshot(id: string): Uint8Array | null {
+      const row = getSnapshotStmt.get(id) as { thumbnail_jpeg: unknown } | null;
+      return row ? asBytes(row.thumbnail_jpeg) : null;
     },
     listStrokes(siteId: string): StrokeRow[] {
       return listStrokesStmt.all(siteId) as StrokeRow[];
@@ -231,6 +326,7 @@ export function openDb(path: string) {
       })();
     },
     clear() {
+      db.exec("DELETE FROM world_map_history");
       db.exec("DELETE FROM strokes");
       db.exec("DELETE FROM sites");
     },

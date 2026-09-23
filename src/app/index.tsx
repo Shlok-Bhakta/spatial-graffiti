@@ -4,7 +4,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SpatialARView } from '@/ar/native';
 import { DEFAULT_STROKE_WIDTH_M, PALETTE, type PaletteColor } from '@/colors';
 import { ColorPicker } from '@/components/ColorPicker';
+import { CoachingBanner } from '@/components/CoachingBanner';
 import { DebugStatus } from '@/components/DebugStatus';
+import { ServerStatus } from '@/components/ServerStatus';
 import { useSiteSession } from '@/site/useSiteSession';
 
 export default function DrawScreen() {
@@ -47,6 +49,8 @@ export default function DrawScreen() {
           pendingCount={session.pendingCount}
           savedOnServer={session.savedOnServer}
         />
+        <ServerStatus />
+        <CoachingBanner phase={session.phase} status={session.status} />
         {session.phase === 'ready' ? (
           <View pointerEvents="none" style={styles.saveBanner}>
             <Text style={styles.saveText}>

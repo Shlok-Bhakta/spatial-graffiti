@@ -113,9 +113,9 @@ The simulator can check UI and API code. It cannot prove AR.
 
 1. Draw a line. Walk. The line stays in the room, not on the screen.
 2. Stand within 1 m of a wall and draw. The stroke sits on the wall.
-3. Point at open space and draw. The stroke sits on a plane about 1.5 m out.
-4. Start an air stroke, then move the phone while drawing. The existing line does not warp with the camera.
-5. Publish a site (wait until mapping is `mapped` or `extending` for several seconds). Kill the app. Reopen it in the same place. After relocalization the drawing returns.
+3. Point at open space and draw. No stroke should start without a detected surface.
+4. Drag a stroke across a wall edge. The line should stop where real geometry blocks it.
+5. Wait until the phone saves a local map, then draw a line and kill the app. Reopen it in the same place. After relocalization the drawing returns. Wait until mapping is `mapped` to confirm server upload.
 6. A second iPhone on the same backend should find the site and see the same line.
 
 The app keeps room maps and an append-only stroke journal in the phone's Documents directory. It retries uploads after relaunch. See [room recovery and its physical test](docs/LOCALIZATION.md).
@@ -124,7 +124,7 @@ The app keeps room maps and an append-only stroke journal in the phone's Documen
 
 Copied from [MB-QR-Code-Scanner](https://github.com/Marginally-Better-Apps/MB-QR-Code-Scanner): npm + Expo prebuild + unsigned `xcodebuild` + Autoloader preview.
 
-PRs publish `pr-<n>` with `Spatial-Graffiti-unsigned.ipa` and a GitHub Pages trampoline. See [docs/AUTOLOADER_DEV_CYCLE.md](docs/AUTOLOADER_DEV_CYCLE.md).
+PRs publish `pr-<n>` with `Spatial-Graffiti-unsigned.ipa` and comment the shared Autoloader shim. See [docs/AUTOLOADER_DEV_CYCLE.md](docs/AUTOLOADER_DEV_CYCLE.md).
 
 On `main`, only `fix:`, `feat:`, and `feat!:` titles build a tagless release artifact.
 

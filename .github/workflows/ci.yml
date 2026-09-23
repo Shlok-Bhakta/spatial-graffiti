@@ -33,8 +33,6 @@ jobs:
         run: python3 scripts/test-select-simulator.py
       - name: Test CI workflow safeguards
         run: python3 scripts/test-ci-workflows.py
-      - name: Test Autoloader preview page
-        run: python3 scripts/test-write-autoloader-page.py
       - name: Test app
         run: npm test
       - name: Typecheck

@@ -1,6 +1,6 @@
 import { File, Paths } from 'expo-file-system';
 
-import type { NearbySite, Site, Stroke } from '@/types';
+import type { NearbySite, Site, Stroke, WorldMapVersion } from '@/types';
 
 export function apiBaseUrl(): string {
   const raw = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -15,6 +15,13 @@ export function apiUrl(path: string): string {
   return `${base}${path}`;
 }
 
+export function apiHostLabel(baseUrl = apiBaseUrl()): string {
+  if (!baseUrl) {
+    return 'API unset';
+  }
+  return baseUrl.replace(/^https?:\/\//, '');
+}
+
 async function readJson<T>(response: Response, label: string): Promise<T> {
   if (!response.ok) {
     const body = await response.text();
@@ -23,9 +30,20 @@ async function readJson<T>(response: Response, label: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function getHealth(): Promise<{ ok: boolean }> {
-  const response = await fetch(apiUrl('/health'));
-  return readJson(response, 'health');
+export async function getHealth(timeoutMs = 4000): Promise<{ ok: boolean }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(apiUrl('/health'), { signal: controller.signal });
+    return await readJson(response, 'health');
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`health timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function getNearbySites(
@@ -72,6 +90,40 @@ export async function downloadWorldMap(siteId: string): Promise<string> {
     { idempotent: true },
   );
   return downloaded.uri;
+}
+
+export async function getWorldMapHistory(siteId: string): Promise<WorldMapVersion[]> {
+  const response = await fetch(apiUrl(`/v1/sites/${siteId}/world-map/history`));
+  const payload = await readJson<{ history: WorldMapVersion[] }>(
+    response,
+    'world map history',
+  );
+  return payload.history;
+}
+
+export async function downloadWorldMapVersion(
+  siteId: string,
+  sha256: string,
+): Promise<string> {
+  const dest = new File(Paths.document, `${siteId}.${sha256.slice(0, 12)}.worldmap`);
+  const downloaded = await File.downloadFileAsync(
+    apiUrl(`/v1/sites/${siteId}/world-map/history/${sha256}`),
+    dest,
+    { idempotent: true },
+  );
+  return downloaded.uri;
+}
+
+export async function uploadSnapshot(siteId: string, jpegFileUri: string): Promise<void> {
+  const file = new File(jpegFileUri);
+  const result = await file.upload(apiUrl(`/v1/sites/${siteId}/snapshot`), {
+    httpMethod: 'PUT',
+    sessionType: 'foreground',
+    headers: { 'Content-Type': 'image/jpeg' },
+  });
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`snapshot upload failed ${result.status}: ${result.body.slice(0, 400)}`);
+  }
 }
 
 export async function getStrokes(siteId: string): Promise<Stroke[]> {

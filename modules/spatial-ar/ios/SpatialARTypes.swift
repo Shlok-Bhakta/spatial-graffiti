@@ -4,13 +4,15 @@ import simd
 
 enum SpatialARMetrics {
   static let surfaceMaxDistance: Float = 1.0
-  static let airDistance: Float = 1.5
   static let zFightOffset: Float = 0.005
   static let minPointSpacing: Float = 0.008
   static let maxPoints = 2048
   static let strokeWidth: Float = 0.01
   static let renderWidthMin: Float = 0.008
   static let renderWidthMax: Float = 0.012
+  /// Minimum depth gap before a stroke point counts as behind real geometry.
+  /// Guards against LiDAR mesh flicker at grazing angles.
+  static let occlusionEpsilon: Float = 0.02
 }
 
 enum SpatialARMode: String {

@@ -20,6 +20,14 @@ export type Site = {
 export type NearbySite = Site & {
   distanceM: number;
   strokeCount?: number;
+  updatedAt?: string;
+  hasSnapshot?: boolean;
+};
+
+export type WorldMapVersion = {
+  sha256: string;
+  byteCount: number;
+  createdAt: string;
 };
 
 export type ARTracking = 'notAvailable' | 'limited' | 'normal';
